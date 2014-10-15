@@ -497,6 +497,10 @@ static int fb_show_logo_line(struct fb_info *info, int rotate,
 	image.dy = y;
 	image.width = logo->width;
 	image.height = logo->height;
+	
+	#ifdef CONFIG_CENTER_LOGO
+	image.dx = (info->var.xres - n*image.width )>>1;
+	#endif
 
 	if (rotate) {
 		logo_rotate = kmalloc(logo->width *
@@ -660,7 +664,7 @@ int fb_show_logo(struct fb_info *info, int rotate)
 	int y;
 
 	y = fb_show_logo_line(info, rotate, fb_logo.logo, 0,
-			      num_online_cpus());
+			      1 /*num_online_cpus()*/);
 	y = fb_show_extra_logos(info, y, rotate);
 
 	return y;

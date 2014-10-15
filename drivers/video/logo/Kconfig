@@ -81,5 +81,14 @@ config LOGO_M32R_CLUT224
 	bool "224-color M32R Linux logo"
 	depends on M32R
 	default y
+	
+config LOGO_NANOBOOT_CLUT224
+	bool "Standard 224-color nanoboot Linux logo"
+	default y
+	
+config CENTER_LOGO
+  bool "Center logo"
+  depends on LOGO
+  default y
 
 endif # LOGO
