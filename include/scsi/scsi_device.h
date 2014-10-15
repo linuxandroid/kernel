@@ -91,6 +91,12 @@ struct scsi_device {
 	unsigned long last_queue_ramp_up;	/* last queue ramp up time */
 
 	unsigned int id, lun, channel;
+#ifdef MY_ABC_HERE
+	char syno_disk_name[BDEVNAME_SIZE];		/* name of major driver */
+#endif
+#ifdef MY_ABC_HERE
+	unsigned char auto_remap;
+#endif
 
 	unsigned int manufacturer;	/* Manufacturer of device, for using 
 					 * vendor-specific cmd's */
@@ -165,6 +171,12 @@ struct scsi_device {
 	atomic_t iodone_cnt;
 	atomic_t ioerr_cnt;
 
+#ifdef MY_ABC_HERE
+	unsigned long   idle;   /* scsi idle time in jiffers */
+	unsigned char	spindown;
+	unsigned char   nospindown;
+#endif /* MY_ABC_HERE */
+
 	struct device		sdev_gendev,
 				sdev_dev;
 
@@ -173,6 +185,19 @@ struct scsi_device {
 
 	struct scsi_dh_data	*scsi_dh_data;
 	enum scsi_device_state sdev_state;
+
+#ifdef MY_ABC_HERE
+	/* Which queue is this disk in. 
+	 * 0 indicates none and should spin up immediately. */
+	unsigned int	    spinup_queue_id;
+	/* Which queue is this disk in. Maybe NULL (id = 0). */
+	struct SpinupQueue *spinup_queue;
+	/* list_head to link against queue */
+	struct list_head    spinup_list;
+	/* Indicates the disk is already spinning up */
+	unsigned int	    spinup_in_process;
+#endif /* MY_ABC_HERE */
+
 	unsigned long		sdev_data[0];
 } __attribute__((aligned(sizeof(unsigned long))));
 
@@ -278,6 +303,16 @@ static inline struct scsi_target *scsi_target(struct scsi_device *sdev)
 
 #define starget_printk(prefix, starget, fmt, a...)	\
 	dev_printk(prefix, &(starget)->dev, fmt, ##a)
+
+#ifdef MY_ABC_HERE
+int SynoSpinupBegin(struct scsi_device *device);
+void SynoSpinupEnd(struct scsi_device *sdev);
+int SynoSpinupRemove(struct scsi_device *sdev);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+#define SYNO_DISK_MODEL_LEN "24"
+#endif
 
 extern struct scsi_device *__scsi_add_device(struct Scsi_Host *,
 		uint, uint, uint, void *hostdata);

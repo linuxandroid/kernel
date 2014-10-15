@@ -872,6 +872,9 @@ extern bool skip_free_areas_node(unsigned int flags, int nid);
 
 int shmem_lock(struct file *file, int lock, struct user_struct *user);
 struct file *shmem_file_setup(const char *name, loff_t size, unsigned long flags);
+#if defined(CONFIG_SYNO_COMCERTO)
+void shmem_set_file(struct vm_area_struct *vma, struct file *file);
+#endif
 int shmem_zero_setup(struct vm_area_struct *);
 
 extern int can_do_mlock(void);
@@ -951,9 +954,12 @@ static inline void unmap_shared_mapping_range(struct address_space *mapping,
 
 extern void truncate_pagecache(struct inode *inode, loff_t old, loff_t new);
 extern void truncate_setsize(struct inode *inode, loff_t newsize);
+#ifdef MY_ABC_HERE
+extern void ecryptfs_truncate_setsize(struct inode *inode, loff_t newsize);
+#endif
 extern int vmtruncate(struct inode *inode, loff_t offset);
 extern int vmtruncate_range(struct inode *inode, loff_t offset, loff_t end);
-
+void truncate_pagecache_range(struct inode *inode, loff_t offset, loff_t end);
 int truncate_inode_page(struct address_space *mapping, struct page *page);
 int generic_error_remove_page(struct address_space *mapping, struct page *page);
 
@@ -1429,13 +1435,26 @@ extern void truncate_inode_pages_range(struct address_space *,
 
 /* generic vm_area_ops exported for stackable file systems */
 extern int filemap_fault(struct vm_area_struct *, struct vm_fault *);
+extern int filemap_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf);
 
 /* mm/page-writeback.c */
 int write_one_page(struct page *page, int wait);
 void task_dirty_inc(struct task_struct *tsk);
 
 /* readahead.c */
+#ifdef MY_ABC_HERE
+#if defined(CONFIG_SYNO_X86) || defined(CONFIG_SYNO_X64)
+#define VM_MAX_READAHEAD        192     /* kbytes */
+#elif defined(CONFIG_SYNO_MV88F6281)
+#define VM_MAX_READAHEAD        2048     /* kbytes */
+#elif defined(CONFIG_SYNO_MPC854X) || defined(CONFIG_SYNO_MPC8533)
+#define VM_MAX_READAHEAD        256     /* kbytes */
+#else
+#define VM_MAX_READAHEAD	512	/* kbytes */
+#endif
+#else /* MY_ABC_HERE */
 #define VM_MAX_READAHEAD	128	/* kbytes */
+#endif /* MY_ABC_HERE */
 #define VM_MIN_READAHEAD	16	/* kbytes (includes current page) */
 
 int force_page_cache_readahead(struct address_space *mapping, struct file *filp,

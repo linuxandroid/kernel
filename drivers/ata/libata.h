@@ -31,6 +31,17 @@
 #define DRV_NAME	"libata"
 #define DRV_VERSION	"3.00"	/* must be exactly four chars */
 
+#ifdef MY_ABC_HERE
+struct ata_blacklist_entry {
+	const char *model_num;
+	const char *model_rev;
+	unsigned long horkage;
+};
+
+extern struct ata_blacklist_entry ata_device_blacklist [];
+extern int glob_match (const char *text, const char *pattern);
+#endif
+
 struct ata_scsi_args {
 	struct ata_device	*dev;
 	u16			*id;
@@ -136,6 +147,9 @@ extern void ata_scsi_scan_host(struct ata_port *ap, int sync);
 extern int ata_scsi_offline_dev(struct ata_device *dev);
 extern void ata_scsi_media_change_notify(struct ata_device *dev);
 extern void ata_scsi_hotplug(struct work_struct *work);
+#ifdef MY_ABC_HERE
+extern void ata_syno_pmp_hotplug(struct work_struct *work);
+#endif //MY_ABC_HERE
 extern void ata_schedule_scsi_eh(struct Scsi_Host *shost);
 extern void ata_scsi_dev_rescan(struct work_struct *work);
 extern int ata_bus_probe(struct ata_port *ap);
@@ -182,6 +196,7 @@ extern int sata_pmp_scr_write(struct ata_link *link, int reg, u32 val);
 extern int sata_pmp_set_lpm(struct ata_link *link, enum ata_lpm_policy policy,
 			    unsigned hints);
 extern int sata_pmp_attach(struct ata_device *dev);
+extern int syno_libata_pmp_deepsleep_indicator_set(struct ata_port *ap, const int blCLR);
 #else /* CONFIG_SATA_PMP */
 static inline int sata_pmp_scr_read(struct ata_link *link, int reg, u32 *val)
 {

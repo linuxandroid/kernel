@@ -74,6 +74,12 @@ struct net_bridge_fdb_entry
 	mac_addr			addr;
 	unsigned char			is_local;
 	unsigned char			is_static;
+
+#if defined(CONFIG_SYNO_ARMADA)
+#if defined(CONFIG_MV_ETH_NFP_HOOKS)
+	bool 			nfp;
+#endif /* CONFIG_MV_ETH_NFP_HOOKS */
+#endif
 };
 
 struct net_bridge_port_group {
@@ -135,6 +141,9 @@ struct net_bridge_port
 
 	unsigned long 			flags;
 #define BR_HAIRPIN_MODE		0x00000001
+#if defined(CONFIG_SYNO_COMCERTO)
+#define BR_ISOLATE_MODE		0x00000002
+#endif
 
 #ifdef CONFIG_BRIDGE_IGMP_SNOOPING
 	u32				multicast_startup_queries_sent;

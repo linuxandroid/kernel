@@ -115,6 +115,81 @@
 #include <asm/alternative.h>
 #include <asm/prom.h>
 
+
+#ifdef  MY_ABC_HERE
+extern char gszSynoHWRevision[];
+#endif
+
+#ifdef  MY_ABC_HERE
+extern char gszSynoHWVersion[];
+#endif
+
+#ifdef MY_ABC_HERE
+extern long g_internal_hd_num;
+#endif
+
+#ifdef MY_ABC_HERE
+extern long g_internal_netif_num;
+#endif
+
+#ifdef SYNO_SAS_DISK_NAME
+extern long g_is_sas_model;
+#endif
+
+#ifdef MY_ABC_HERE
+extern long g_ahci_switch;
+#endif
+
+#ifdef MY_ABC_HERE
+extern long g_sata_led_special;
+#endif
+
+#ifdef MY_ABC_HERE
+extern long g_hdd_hotplug;
+#endif
+
+#ifdef MY_ABC_HERE
+extern char gszSataPortMap[8];
+#endif
+
+#ifdef MY_ABC_HERE
+extern char gszDiskIdxMap[16];
+#endif
+
+#ifdef MY_ABC_HERE
+extern char giDiskSeqReverse[8];
+#endif
+
+#ifdef MY_ABC_HERE
+extern int gSynoHasDynModule;
+#endif
+
+#ifdef MY_ABC_HERE
+extern unsigned char grgbLanMac[4][16];
+#endif
+
+#ifdef MY_ABC_HERE
+extern char gszSerialNum[32];
+extern char gszCustomSerialNum[32];
+#endif
+
+#ifdef MY_ABC_HERE
+extern unsigned int gSwitchDev;
+extern char gDevPCIName[SYNO_MAX_SWITCHABLE_NET_DEVICE][SYNO_NET_DEVICE_ENCODING_LENGTH];
+#endif
+
+#ifdef MY_ABC_HERE
+extern int gSynoFactoryUSBFastReset;
+#endif
+
+#ifdef MY_ABC_HERE
+extern int gSynoFactoryUSB3Disable;
+#endif
+
+#ifdef CONFIG_SYNO_DUAL_HEAD
+extern int gSynoDualHead;
+#endif
+
 /*
  * end_pfn only includes RAM, while max_pfn_mapped includes all e820 entries.
  * The direct mapping extends to max_pfn_mapped, so that we can directly access
@@ -286,6 +361,17 @@ void * __init extend_brk(size_t size, size_t align)
 	return ret;
 }
 
+#if defined(MY_ABC_HERE)
+#if defined(CONFIG_ARCH_GEN3)
+#else
+int sys_SYNOMTDAlloc(char blMalloc)
+{
+	printk("%s: Not supported on this platform.\n", __func__);
+	return 0;
+}
+#endif
+#endif
+
 #ifdef CONFIG_X86_64
 static void __init init_gbpages(void)
 {
@@ -452,6 +538,11 @@ static void __init parse_setup_data(void)
 		case SETUP_DTB:
 			add_dtb(pa_data);
 			break;
+#ifdef CONFIG_ARCH_GEN3			
+		case SETUP_BOARD_TYPE:
+			intelce_set_board_type(readl(data->data));
+			break;
+#endif			
 		default:
 			break;
 		}
@@ -503,6 +594,281 @@ static void __init memblock_x86_reserve_range_setup_data(void)
 		early_iounmap(data, sizeof(*data));
 	}
 }
+
+#ifdef MY_ABC_HERE
+static int __init early_hw_version(char *p)
+{
+	char *szPtr;
+
+	snprintf(gszSynoHWVersion, 16, "%s", p);
+
+	szPtr = gszSynoHWVersion;
+	while ((*szPtr != ' ') && (*szPtr != '\t') && (*szPtr != '\0')) {
+		szPtr++;
+	}
+	*szPtr = 0;
+	strcat(gszSynoHWVersion, "-j");
+
+	printk("Synology Hardware Version: %s\n", gszSynoHWVersion);
+
+	return 1;
+}
+__setup("syno_hw_version=", early_hw_version);
+#endif
+
+#ifdef MY_ABC_HERE
+static int __init early_hw_revision(char *p)
+{
+	snprintf(gszSynoHWRevision, 4, "%s", p);
+
+	printk("Synology Hardware Revision: %s\n", gszSynoHWRevision);
+
+	return 1;
+}
+__setup("rev=", early_hw_revision);
+#endif
+
+#ifdef MY_ABC_HERE
+static int __init early_internal_hd_num(char *p)
+{
+	g_internal_hd_num = simple_strtol(p, NULL, 10);
+
+	printk("Internal HD num: %d\n", (int)g_internal_hd_num);
+
+    return 1;
+}
+__setup("ihd_num=", early_internal_hd_num);
+#endif
+
+#ifdef  MY_ABC_HERE
+static int __init early_internal_netif_num(char *p)
+{
+	g_internal_netif_num = simple_strtol(p, NULL, 10);
+
+	if ( g_internal_netif_num >= 0 ) {
+		printk("Internal netif num: %d\n", (int)g_internal_netif_num);
+	}
+
+	return 1;
+}
+__setup("netif_num=", early_internal_netif_num);
+#endif
+
+#ifdef SYNO_SAS_DISK_NAME
+static int __init early_SASmodel(char *p)
+{
+	g_is_sas_model = simple_strtol(p, NULL, 10);
+
+	if ( 1 == g_is_sas_model) {
+		printk("SAS model: %d\n", (int)g_is_sas_model);
+	}
+
+	return 1;
+}
+__setup("SASmodel=", early_SASmodel);
+#endif
+
+#ifdef  MY_ABC_HERE
+static int __init early_ahci_switch(char *p)
+{
+        g_ahci_switch = simple_strtol(p, NULL, 10);
+
+        if ( g_ahci_switch >= 0 ) {
+                printk("AHCI: %d\n", (int)g_ahci_switch);
+        }
+
+        return 1;
+}
+__setup("ahci=", early_ahci_switch);
+#endif
+
+#ifdef MY_ABC_HERE
+static int __init early_sataled_special(char *p)
+{
+	g_sata_led_special = simple_strtol(p, NULL, 10);
+
+	if ( g_sata_led_special >= 0 ) {
+		printk("Special Sata LEDs.\n");
+	}
+
+	return 1;
+}
+__setup("SataLedSpecial=", early_sataled_special);
+#endif
+
+#ifdef MY_ABC_HERE
+static int __init early_hdd_hotplug(char *p)
+{
+	g_hdd_hotplug = simple_strtol(p, NULL, 10);
+
+	if ( g_hdd_hotplug > 0 ) {
+		printk("Support HDD Hotplug.\n");
+	}
+
+	return 1;
+}
+__setup("HddHotplug=", early_hdd_hotplug);
+#endif
+
+#ifdef MY_ABC_HERE
+static int __init early_sataport_map(char *p)
+{
+	snprintf(gszSataPortMap, sizeof(gszSataPortMap), "%s", p);
+
+	if(0 != gszSataPortMap[0]) {
+		printk("Sata Port Map: %s\n", gszSataPortMap);
+	}
+
+	return 1;
+}
+__setup("SataPortMap=", early_sataport_map);
+#endif
+
+#ifdef MY_ABC_HERE
+static int __init early_disk_idx_map(char *p)
+{
+	snprintf(gszDiskIdxMap, sizeof(gszDiskIdxMap), "%s", p);
+
+	if('\0' != gszDiskIdxMap[0]) {
+		printk("Disk Index Map: %s\n", gszDiskIdxMap);
+	}
+
+	return 1;
+}
+__setup("DiskIdxMap=", early_disk_idx_map);
+#endif
+
+#ifdef MY_ABC_HERE
+static int __init early_disk_seq_reserve(char *p)
+{
+	snprintf(giDiskSeqReverse, sizeof(giDiskSeqReverse), "%s", p);
+
+	if('\0' != giDiskSeqReverse[0]) {
+		printk("Disk Sequence Reverse: %s\n", giDiskSeqReverse);
+	}
+
+	return 1;
+}
+__setup("DiskSeqReverse=", early_disk_seq_reserve);
+#endif
+
+#ifdef MY_ABC_HERE
+static int __init early_is_dyn_module(char *p)
+{
+	int iLen = 0;
+
+	gSynoHasDynModule = 1;
+	
+	if ((NULL == p) || (0 == (iLen = strlen(p)))) {
+		goto END;
+	}
+
+	if ( 0 == strcmp (p, "n")) {
+		gSynoHasDynModule = 0;
+		printk("Synology Dynamic Module support disabled.\n");
+	}
+
+END:
+	return 1;
+}
+__setup("syno_dyn_module=", early_is_dyn_module);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+static int __init early_mac1(char *p)
+{
+	snprintf(grgbLanMac[0], sizeof(grgbLanMac[0]), "%s", p);
+
+	printk("Mac1: %s\n", grgbLanMac[0]);
+
+	return 1;
+}
+__setup("mac1=", early_mac1);
+
+static int __init early_mac2(char *p)
+{
+	snprintf(grgbLanMac[1], sizeof(grgbLanMac[1]), "%s", p);
+
+	printk("Mac2: %s\n", grgbLanMac[1]);
+
+	return 1;
+}
+__setup("mac2=", early_mac2);
+
+static int __init early_mac3(char *p)
+{
+	snprintf(grgbLanMac[2], sizeof(grgbLanMac[2]), "%s", p);
+
+	printk("Mac3: %s\n", grgbLanMac[2]);
+
+	return 1;
+}
+__setup("mac3=", early_mac3);
+
+static int __init early_mac4(char *p)
+{
+	snprintf(grgbLanMac[3], sizeof(grgbLanMac[3]), "%s", p);
+
+	printk("Mac4: %s\n", grgbLanMac[3]);
+
+	return 1;
+}
+__setup("mac4=", early_mac4);
+#endif
+
+#ifdef MY_ABC_HERE
+static int __init early_sn(char *p)
+{
+        snprintf(gszSerialNum, sizeof(gszSerialNum), "%s", p);
+        printk("Serial Number: %s\n", gszSerialNum);
+        return 1;
+}
+__setup("sn=", early_sn);
+
+static int __init early_custom_sn(char *p)
+{
+        snprintf(gszCustomSerialNum, sizeof(gszCustomSerialNum), "%s", p);
+        printk("Custom Serial Number: %s\n", gszCustomSerialNum);
+        return 1;
+}
+__setup("custom_sn=", early_custom_sn);
+#endif
+
+#ifdef MY_ABC_HERE
+static int __init early_factory_usb_fast_reset(char *p)
+{
+	gSynoFactoryUSBFastReset = simple_strtol(p, NULL, 10);
+
+	printk("Factory USB Fast Reset: %d\n", (int)gSynoFactoryUSBFastReset);
+
+	return 1;
+}
+__setup("syno_usb_fast_reset=", early_factory_usb_fast_reset);
+#endif
+
+#ifdef MY_ABC_HERE
+static int __init early_factory_usb3_disable(char *p)
+{
+	gSynoFactoryUSB3Disable = simple_strtol(p, NULL, 10);
+
+	printk("Factory USB3 Disable: %d\n", (int)gSynoFactoryUSB3Disable);
+
+	return 1;
+}
+__setup("syno_disable_usb3=", early_factory_usb3_disable);
+#endif
+
+#ifdef CONFIG_SYNO_DUAL_HEAD
+static int __init early_dual_head(char *p)
+{
+	gSynoDualHead = simple_strtol(p, NULL, 10);
+
+	printk("Synology Dual Head: %d\n", gSynoDualHead);
+
+	return 1;
+}
+__setup("dual_head=", early_dual_head);
+#endif
 
 /*
  * --------- Crashkernel reservation ------------------------------

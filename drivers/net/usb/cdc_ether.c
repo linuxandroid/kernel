@@ -479,10 +479,23 @@ static const struct driver_info wwan_info = {
 	.manage_power =	cdc_manage_power,
 };
 
+#ifdef MY_ABC_HERE
+static const struct driver_info	syno_yota_wimax_cdc_info = {
+	.description =	SYNO_YOTAWIMAX_DESC,
+	.flags =	FLAG_ETHER,
+	// .check_connect = cdc_check_connect,
+	.bind =		usbnet_cdc_bind,
+	.unbind =	usbnet_cdc_unbind,
+	.status =	usbnet_cdc_status,
+};
+#endif
+
 /*-------------------------------------------------------------------------*/
 
 #define HUAWEI_VENDOR_ID	0x12D1
 #define NOVATEL_VENDOR_ID	0x1410
+#define ZTE_VENDOR_ID		0x19D2
+#define DELL_VENDOR_ID		0x413C
 
 static const struct usb_device_id	products [] = {
 /*
@@ -588,6 +601,46 @@ static const struct usb_device_id	products [] = {
 	.driver_info		= 0,
 },
 
+/* Novatel USB551L and MC551 - handled by qmi_wwan */
+{
+	.match_flags    =   USB_DEVICE_ID_MATCH_VENDOR
+		 | USB_DEVICE_ID_MATCH_PRODUCT
+		 | USB_DEVICE_ID_MATCH_INT_INFO,
+	.idVendor               = NOVATEL_VENDOR_ID,
+	.idProduct		= 0xB001,
+	.bInterfaceClass	= USB_CLASS_COMM,
+	.bInterfaceSubClass	= USB_CDC_SUBCLASS_ETHERNET,
+	.bInterfaceProtocol	= USB_CDC_PROTO_NONE,
+	.driver_info = 0,
+},
+
+/* Novatel E362 - handled by qmi_wwan */
+{
+	.match_flags    =   USB_DEVICE_ID_MATCH_VENDOR
+		 | USB_DEVICE_ID_MATCH_PRODUCT
+		 | USB_DEVICE_ID_MATCH_INT_INFO,
+	.idVendor               = NOVATEL_VENDOR_ID,
+	.idProduct		= 0x9010,
+	.bInterfaceClass	= USB_CLASS_COMM,
+	.bInterfaceSubClass	= USB_CDC_SUBCLASS_ETHERNET,
+	.bInterfaceProtocol	= USB_CDC_PROTO_NONE,
+	.driver_info = 0,
+},
+
+/* Dell Wireless 5800 (Novatel E362) - handled by qmi_wwan */
+{
+	USB_DEVICE_AND_INTERFACE_INFO(DELL_VENDOR_ID, 0x8195, USB_CLASS_COMM,
+			USB_CDC_SUBCLASS_ETHERNET, USB_CDC_PROTO_NONE),
+	.driver_info = 0,
+},
+
+/* Dell Wireless 5800 (Novatel E362) - handled by qmi_wwan */
+{
+	USB_DEVICE_AND_INTERFACE_INFO(DELL_VENDOR_ID, 0x8196, USB_CLASS_COMM,
+			USB_CDC_SUBCLASS_ETHERNET, USB_CDC_PROTO_NONE),
+	.driver_info = 0,
+},
+
 /*
  * WHITELIST!!!
  *
@@ -599,17 +652,77 @@ static const struct usb_device_id	products [] = {
  * NOTE:  this match must come AFTER entries blacklisting devices
  * because of bugs/quirks in a given product (like Zaurus, above).
  */
+#ifdef MY_ABC_HERE
 {
-	/* Novatel USB551L */
-	/* This match must come *before* the generic CDC-ETHER match so that
-	 * we get FLAG_WWAN set on the device, since it's descriptors are
-	 * generic CDC-ETHER.
-	 */
+	.match_flags			= USB_DEVICE_ID_MATCH_DEVICE | USB_DEVICE_ID_MATCH_INT_INFO,
+	.idVendor               = 0x1076,
+	.idProduct              = 0x7708,
+	.bInterfaceClass = USB_CLASS_COMM,
+	.bInterfaceSubClass = USB_CDC_SUBCLASS_ETHERNET,
+	.bInterfaceProtocol = USB_CDC_PROTO_NONE,
+	.driver_info = (unsigned long) &syno_yota_wimax_cdc_info,
+}, 
+{
+	.match_flags			= USB_DEVICE_ID_MATCH_DEVICE | USB_DEVICE_ID_MATCH_INT_INFO,
+	.idVendor               = 0x525,
+	.idProduct              = 0xa4a2,
+	.bInterfaceClass = USB_CLASS_COMM,
+	.bInterfaceSubClass = USB_CDC_SUBCLASS_ETHERNET,
+	.bInterfaceProtocol = USB_CDC_PROTO_NONE,
+	.driver_info = (unsigned long) &syno_yota_wimax_cdc_info,
+}, 
+#endif
+{
+	/* ZTE (Vodafone) K3805-Z */
 	.match_flags    =   USB_DEVICE_ID_MATCH_VENDOR
 		 | USB_DEVICE_ID_MATCH_PRODUCT
 		 | USB_DEVICE_ID_MATCH_INT_INFO,
-	.idVendor               = NOVATEL_VENDOR_ID,
-	.idProduct		= 0xB001,
+	.idVendor               = ZTE_VENDOR_ID,
+	.idProduct		= 0x1003,
+	.bInterfaceClass	= USB_CLASS_COMM,
+	.bInterfaceSubClass	= USB_CDC_SUBCLASS_ETHERNET,
+	.bInterfaceProtocol	= USB_CDC_PROTO_NONE,
+	.driver_info = (unsigned long)&wwan_info,
+}, {
+	/* ZTE (Vodafone) K3806-Z */
+	.match_flags    =   USB_DEVICE_ID_MATCH_VENDOR
+		 | USB_DEVICE_ID_MATCH_PRODUCT
+		 | USB_DEVICE_ID_MATCH_INT_INFO,
+	.idVendor               = ZTE_VENDOR_ID,
+	.idProduct		= 0x1015,
+	.bInterfaceClass	= USB_CLASS_COMM,
+	.bInterfaceSubClass	= USB_CDC_SUBCLASS_ETHERNET,
+	.bInterfaceProtocol	= USB_CDC_PROTO_NONE,
+	.driver_info = (unsigned long)&wwan_info,
+}, {
+	/* ZTE (Vodafone) K4510-Z */
+	.match_flags    =   USB_DEVICE_ID_MATCH_VENDOR
+		 | USB_DEVICE_ID_MATCH_PRODUCT
+		 | USB_DEVICE_ID_MATCH_INT_INFO,
+	.idVendor               = ZTE_VENDOR_ID,
+	.idProduct		= 0x1173,
+	.bInterfaceClass	= USB_CLASS_COMM,
+	.bInterfaceSubClass	= USB_CDC_SUBCLASS_ETHERNET,
+	.bInterfaceProtocol	= USB_CDC_PROTO_NONE,
+	.driver_info = (unsigned long)&wwan_info,
+}, {
+	/* ZTE (Vodafone) K3770-Z */
+	.match_flags    =   USB_DEVICE_ID_MATCH_VENDOR
+		 | USB_DEVICE_ID_MATCH_PRODUCT
+		 | USB_DEVICE_ID_MATCH_INT_INFO,
+	.idVendor               = ZTE_VENDOR_ID,
+	.idProduct		= 0x1177,
+	.bInterfaceClass	= USB_CLASS_COMM,
+	.bInterfaceSubClass	= USB_CDC_SUBCLASS_ETHERNET,
+	.bInterfaceProtocol	= USB_CDC_PROTO_NONE,
+	.driver_info = (unsigned long)&wwan_info,
+}, {
+	/* ZTE (Vodafone) K3772-Z */
+	.match_flags    =   USB_DEVICE_ID_MATCH_VENDOR
+		 | USB_DEVICE_ID_MATCH_PRODUCT
+		 | USB_DEVICE_ID_MATCH_INT_INFO,
+	.idVendor               = ZTE_VENDOR_ID,
+	.idProduct		= 0x1181,
 	.bInterfaceClass	= USB_CLASS_COMM,
 	.bInterfaceSubClass	= USB_CDC_SUBCLASS_ETHERNET,
 	.bInterfaceProtocol	= USB_CDC_PROTO_NONE,

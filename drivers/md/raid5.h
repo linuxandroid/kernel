@@ -206,6 +206,9 @@ struct stripe_head {
 	short			ddf_layout;/* use DDF ordering to calculate Q */
 	unsigned long		state;		/* state flags */
 	atomic_t		count;	      /* nr of active thread/requests */
+#ifdef MY_ABC_HERE
+	spinlock_t		lock;
+#endif
 	int			bm_seq;	/* sequence number for bitmap flushes */
 	int			disks;		/* disks in stripe */
 	enum check_states	check_state;
@@ -275,6 +278,7 @@ struct stripe_head_state {
 #define	R5_WantFUA	14	/* Write should be FUA */
 #define	R5_WriteError	15	/* got a write error - need to record it */
 #define	R5_MadeGood	16	/* A bad block has been fixed by writing to it*/
+#define	R5_Discard	19	/* Discard the stripe */
 /*
  * Write method
  */
@@ -289,7 +293,9 @@ struct stripe_head_state {
  * Stripe state
  */
 enum {
+#ifndef MY_ABC_HERE
 	STRIPE_ACTIVE,
+#endif
 	STRIPE_HANDLE,
 	STRIPE_SYNC_REQUESTED,
 	STRIPE_SYNCING,
@@ -307,6 +313,10 @@ enum {
 	STRIPE_COMPUTE_RUN,
 	STRIPE_OPS_REQ_PENDING,
 };
+
+#ifdef MY_ABC_HERE
+#define STRIPE_NORETRY		17
+#endif
 
 /*
  * Operation request flags

@@ -175,8 +175,6 @@ static void nilfs_i_callback(struct rcu_head *head)
 	struct inode *inode = container_of(head, struct inode, i_rcu);
 	struct nilfs_mdt_info *mdi = NILFS_MDT(inode);
 
-	INIT_LIST_HEAD(&inode->i_dentry);
-
 	if (mdi) {
 		kfree(mdi->mi_bgl); /* kfree(NULL) is safe */
 		kfree(mdi);
@@ -1391,6 +1389,12 @@ static void nilfs_segbuf_init_once(void *obj)
 
 static void nilfs_destroy_cachep(void)
 {
+	/*
+	 * Make sure all delayed rcu free inodes are flushed before we
+	 * destroy cache.
+	 */
+	rcu_barrier();
+
 	if (nilfs_inode_cachep)
 		kmem_cache_destroy(nilfs_inode_cachep);
 	if (nilfs_transaction_cachep)

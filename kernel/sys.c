@@ -375,6 +375,9 @@ void kernel_restart(char *cmd)
 }
 EXPORT_SYMBOL_GPL(kernel_restart);
 
+#ifdef SYNO_SATA_PM_DEVICE_GPIO 
+extern void scsi_host_poweroff_all(void);
+#endif
 static void kernel_shutdown_prepare(enum system_states state)
 {
 	blocking_notifier_call_chain(&reboot_notifier_list,
@@ -382,6 +385,9 @@ static void kernel_shutdown_prepare(enum system_states state)
 	system_state = state;
 	usermodehelper_disable();
 	device_shutdown();
+#ifdef SYNO_SATA_PM_DEVICE_GPIO
+	scsi_host_poweroff_all();
+#endif
 }
 /**
  *	kernel_halt - halt the system
@@ -406,7 +412,13 @@ EXPORT_SYMBOL_GPL(kernel_halt);
  */
 void kernel_power_off(void)
 {
+#ifdef MY_ABC_HERE 
+	extern int syno_schedule_power_on_prepare(void);
+#endif
 	kernel_shutdown_prepare(SYSTEM_POWER_OFF);
+#ifdef MY_ABC_HERE 
+	syno_schedule_power_on_prepare();
+#endif
 	if (pm_power_off_prepare)
 		pm_power_off_prepare();
 	disable_nonboot_cpus();
@@ -417,6 +429,22 @@ void kernel_power_off(void)
 }
 EXPORT_SYMBOL_GPL(kernel_power_off);
 
+#ifdef MY_ABC_HERE
+#if defined(CONFIG_SYNO_CEDARVIEW) || defined(CONFIG_ARCH_GEN3) || defined(CONFIG_SYNO_AVOTON)
+#define UART_PORT1_IOBASE   0x2F8
+#else
+#define UART_PORT1_IOBASE   0x3F8
+#endif
+#define UART_CMD_PREFIX 45 // "-"
+#define UART_CMD_REBOOT 67 // "C"
+#define UART_CMD_POWEROFF   49 // "1"
+// below is copied from include/linux/serial_reg.h
+#define UART_TX     0   /* Out: Transmit buffer */
+#define UART_IER    1   /* Out: Interrupt Enable Register */
+#define UART_IER_THRI       0x02 /* Enable Transmitter holding register int. */
+#define UART_START_TX   UART_IER_THRI
+#define UART_STOP_TX    0x0
+#endif
 static DEFINE_MUTEX(reboot_mutex);
 
 /*
@@ -445,15 +473,26 @@ SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
 	                magic2 != LINUX_REBOOT_MAGIC2C))
 		return -EINVAL;
 
+#ifdef CONFIG_ARCH_GEN3
+#else
 	/* Instead of trying to make the power_off code look like
 	 * halt when pm_power_off is not set do it the easy way.
 	 */
 	if ((cmd == LINUX_REBOOT_CMD_POWER_OFF) && !pm_power_off)
 		cmd = LINUX_REBOOT_CMD_HALT;
+#endif
 
 	mutex_lock(&reboot_mutex);
 	switch (cmd) {
 	case LINUX_REBOOT_CMD_RESTART:
+#ifdef MY_ABC_HERE
+        outb(UART_START_TX, UART_PORT1_IOBASE + UART_IER);
+        outb(UART_CMD_PREFIX, UART_PORT1_IOBASE + UART_TX);
+        outb(UART_CMD_REBOOT, UART_PORT1_IOBASE + UART_TX);
+        outb(13, UART_PORT1_IOBASE + UART_TX);
+        outb(10, UART_PORT1_IOBASE + UART_TX);
+        outb(UART_STOP_TX, UART_PORT1_IOBASE + UART_IER);
+#endif
 		kernel_restart(NULL);
 		break;
 
@@ -471,6 +510,17 @@ SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
 		panic("cannot halt");
 
 	case LINUX_REBOOT_CMD_POWER_OFF:
+#ifdef MY_ABC_HERE
+#if defined(CONFIG_ARCH_GEN3)
+#else
+        outb(UART_START_TX, UART_PORT1_IOBASE + UART_IER);
+        outb(UART_CMD_PREFIX, UART_PORT1_IOBASE + UART_TX);
+        outb(UART_CMD_POWEROFF, UART_PORT1_IOBASE + UART_TX);
+        outb(13, UART_PORT1_IOBASE + UART_TX);
+        outb(10, UART_PORT1_IOBASE + UART_TX);
+        outb(UART_STOP_TX, UART_PORT1_IOBASE + UART_IER);
+#endif
+#endif
 		kernel_power_off();
 		do_exit(0);
 		break;

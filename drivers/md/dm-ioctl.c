@@ -1012,6 +1012,16 @@ static int do_resume(struct dm_ioctl *param)
 	return r;
 }
 
+#ifdef MY_ABC_HERE
+static int dev_active(struct dm_ioctl *param, size_t param_size)
+{
+	if (param->flags & DM_SUSPEND_FLAG)
+		return do_suspend(param);
+
+	return do_resume(param);
+}
+#endif
+
 /*
  * Set or unset the suspension state of a device.
  * If the device already is in the requested state we just return its status.

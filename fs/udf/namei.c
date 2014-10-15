@@ -34,11 +34,21 @@
 
 enum { UDF_MAX_LINKS = 0xffff };
 
+#ifdef MY_ABC_HERE
+static inline int udf_match(int len1, const unsigned char *name1, int len2,
+			    const unsigned char *name2, int iCaseless)
+#else
 static inline int udf_match(int len1, const unsigned char *name1, int len2,
 			    const unsigned char *name2)
+#endif
 {
 	if (len1 != len2)
 		return 0;
+#ifdef MY_ABC_HERE
+	if (iCaseless) {
+        return !strncasecmp(name1, name2, len1);
+	}
+#endif
 
 	return !memcmp(name1, name2, len1);
 }
@@ -236,8 +246,15 @@ static struct fileIdentDesc *udf_find_entry(struct inode *dir,
 			continue;
 
 		flen = udf_get_filename(dir->i_sb, nameptr, fname, lfi);
+#ifdef MY_ABC_HERE
+		if (flen && udf_match(flen, fname, child->len, child->name,
+					UDF_QUERY_FLAG(dir->i_sb, SYNO_UDF_FLAG_FORCE_CASELESS))) {
+			goto out_ok;
+		}
+#else
 		if (flen && udf_match(flen, fname, child->len, child->name))
 			goto out_ok;
+#endif
 	}
 
 out_err:
@@ -552,7 +569,7 @@ static int udf_delete_entry(struct inode *inode, struct fileIdentDesc *fi,
 	return udf_write_fi(inode, cfi, fi, fibh, NULL, NULL);
 }
 
-static int udf_create(struct inode *dir, struct dentry *dentry, int mode,
+static int udf_create(struct inode *dir, struct dentry *dentry, umode_t mode,
 		      struct nameidata *nd)
 {
 	struct udf_fileident_bh fibh;
@@ -596,7 +613,7 @@ static int udf_create(struct inode *dir, struct dentry *dentry, int mode,
 	return 0;
 }
 
-static int udf_mknod(struct inode *dir, struct dentry *dentry, int mode,
+static int udf_mknod(struct inode *dir, struct dentry *dentry, umode_t mode,
 		     dev_t rdev)
 {
 	struct inode *inode;
@@ -640,7 +657,7 @@ out:
 	return err;
 }
 
-static int udf_mkdir(struct inode *dir, struct dentry *dentry, int mode)
+static int udf_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 {
 	struct inode *inode;
 	struct udf_fileident_bh fibh;

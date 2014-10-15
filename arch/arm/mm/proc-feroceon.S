@@ -116,11 +116,37 @@ ENTRY(cpu_feroceon_reset)
  *
  * Called with IRQs disabled
  */
+#ifdef CONFIG_SYNO_ARMADA_ARCH
+#ifdef CONFIG_JTAG_DEBUG
+support_wait_for_interrupt_address:
+        .word   support_wait_for_interrupt
+#endif
+#endif
+
 	.align	5
 ENTRY(cpu_feroceon_do_idle)
+#ifdef CONFIG_SYNO_ARMADA_ARCH
+#ifdef CONFIG_JTAG_DEBUG
+        ldr     r0, support_wait_for_interrupt_address
+        ldr     r0, [r0]
+        cmp     r0, #1    /* check if the device doesn't support wait for interrupt */
+        bne     1f        /* if yes, then go out */
+#endif
+#endif
 	mov	r0, #0
+#ifdef CONFIG_SYNO_ARMADA_ARCH
+	mrc	p15, 0, r1, c1, c0, 0		@ Read control register
+#endif
 	mcr	p15, 0, r0, c7, c10, 4		@ Drain write buffer
+#ifdef CONFIG_SYNO_ARMADA_ARCH
+	bic	r2, r1, #1 << 12
+	mcr	p15, 0, r2, c1, c0, 0		@ Disable I cache
+#endif
 	mcr	p15, 0, r0, c7, c0, 4		@ Wait for interrupt
+#ifdef CONFIG_SYNO_ARMADA_ARCH
+	mcr	p15, 0, r1, c1, c0, 0		@ Restore ICache enable
+1:
+#endif
 	mov	pc, lr
 
 /*

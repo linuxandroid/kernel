@@ -12,7 +12,11 @@
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/mbus.h>
+#ifdef SYNO_6281_SOC_USE_OPENSOURCE_USB
+#include "../../../arch/arm/plat-orion/include/plat/ehci-orion.h"
+#else
 #include <plat/ehci-orion.h>
+#endif
 
 #define rdl(off)	__raw_readl(hcd->regs + (off))
 #define wrl(off, val)	__raw_writel((val), hcd->regs + (off))

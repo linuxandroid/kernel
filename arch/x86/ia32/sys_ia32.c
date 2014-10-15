@@ -95,6 +95,171 @@ static int cp_stat64(struct stat64 __user *ubuf, struct kstat *stat)
 	return 0;
 }
 
+#ifdef MY_ABC_HERE
+#include <linux/synolib.h>
+extern int syno_hibernation_log_sec;
+#endif
+
+#ifdef MY_ABC_HERE
+
+#include <linux/namei.h>
+
+extern int __SYNOCaselessStat(char __user * filename, int nofollowLink, struct kstat *stat, int *lastComponent, int flags);
+extern int syno_vfs_stat(const char __user *name, struct kstat *stat, int flags, int stat_flags);
+extern int syno_vfs_fstat(unsigned int fd, struct kstat *stat, int stat_flags);
+
+asmlinkage long sys32_SYNOCaselessStat(char __user * filename, struct stat64 __user *statbuf)
+{
+	int lastComponent = 0;
+	long error = -1;
+	struct kstat stat;
+
+	error =  __SYNOCaselessStat(filename, 0, &stat, &lastComponent, 0);
+	if (!error) {
+		error = cp_stat64(statbuf, &stat);
+	}
+
+	return error;
+}
+
+asmlinkage long sys32_SYNOCaselessLStat(char __user * filename, struct stat64 __user *statbuf)
+{
+	int lastComponent = 0;
+	long error = -1;
+	struct kstat stat;
+
+	error =  __SYNOCaselessStat(filename, 1, &stat, &lastComponent, 0);
+	if (!error) {
+		error = cp_stat64(statbuf, &stat);
+	}
+
+	return error;
+}
+#endif
+
+#ifdef MY_ABC_HERE
+
+#include <linux/namei.h>
+
+// For 32 bit application 
+struct SYNOSTAT64_EXTRA {
+	struct compat_timespec creatTime;  //Create Time
+	unsigned int bkpVer;  		//Backup Version
+	unsigned int archBit; 		//Archive Bit
+	unsigned int lastComponent; //For caseless stat, it means parent directory is found.
+};
+
+struct SYNOSTAT64 {
+	struct stat64 st;
+	struct SYNOSTAT64_EXTRA ext;
+};
+
+static int SYNOStatCopyToUser(struct kstat *pKst, unsigned int flags, struct SYNOSTAT64 __user * pSt)
+{
+	int error = -EFAULT;
+
+	if (flags & SYNOST_STAT) {
+		error = cp_stat64(&pSt->st, pKst);
+		if (error) {
+			goto Out;
+		}
+	}
+
+#ifdef MY_ABC_HERE
+	if (flags & SYNOST_ARBIT) {
+		if (__put_user(pKst->SynoMode, &pSt->ext.archBit)){
+			goto Out;
+		}
+	}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	if (flags & SYNOST_BKPVER) {
+		if (__put_user(pKst->syno_archive_version, &pSt->ext.bkpVer)){
+			goto Out;
+		}
+	}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	if (flags & SYNOST_CREATIME) {
+		if (__put_user(pKst->SynoCreateTime.tv_sec, &pSt->ext.creatTime.tv_sec)){
+			goto Out;
+		}
+		if (__put_user(pKst->SynoCreateTime.tv_nsec, &pSt->ext.creatTime.tv_nsec)){
+			goto Out;
+		}
+	}
+#endif /* MY_ABC_HERE */
+
+	error = 0;
+Out:
+	return error;
+}
+
+static long do_SYNOStat32(char __user * filename, int nofollowLink, unsigned int flags, struct SYNOSTAT64 __user * pSt)
+{
+	long error = -EINVAL;
+	int lastComponent = 0;
+	struct kstat kst;
+
+	if (flags & SYNOST_IS_CASELESS) {
+#ifdef MY_ABC_HERE
+		error = __SYNOCaselessStat(filename, nofollowLink, &kst, &lastComponent, flags);
+		if (-ENOENT == error) {
+			if (__put_user(lastComponent, &pSt->ext.lastComponent)){
+				goto Out;
+			}
+		}
+#else
+		error = -EOPNOTSUPP;
+#endif
+	} else {
+		if (nofollowLink) {
+			error = syno_vfs_stat(filename, &kst, 0, flags);
+		} else {
+			error = syno_vfs_stat(filename, &kst, LOOKUP_FOLLOW, flags);
+#ifdef MY_ABC_HERE
+			if(syno_hibernation_log_sec > 0) {
+				syno_do_hibernation_log(filename);
+			}
+#endif
+		}
+	}
+
+	if (error) {
+		goto Out;
+	}
+
+	error = SYNOStatCopyToUser(&kst, flags, pSt);
+Out:
+	return error;
+}
+
+asmlinkage long sys32_SYNOStat(char __user * filename, unsigned int flags, struct SYNOSTAT64 __user * pSt)
+{
+	return do_SYNOStat32(filename, 0, flags, pSt);
+}
+
+asmlinkage long sys32_SYNOFStat(unsigned int fd, unsigned int flags, struct SYNOSTAT64 __user * pSt)
+{
+	int error;
+	struct kstat kst;
+
+	error = syno_vfs_fstat(fd, &kst, flags);
+	if (!error) {
+		error = SYNOStatCopyToUser(&kst, flags, pSt);
+	}
+	return error;
+}
+
+asmlinkage long sys32_SYNOLStat(char __user * filename, unsigned int flags, struct SYNOSTAT64 __user * pSt)
+{
+	return do_SYNOStat32(filename, 1, flags, pSt);
+}
+
+#endif /* MY_ABC_HERE */
+
 asmlinkage long sys32_stat64(const char __user *filename,
 			     struct stat64 __user *statbuf)
 {

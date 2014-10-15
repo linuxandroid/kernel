@@ -16,6 +16,10 @@
 #include <linux/module.h>
 #include <linux/atomic.h>
 
+#ifdef MY_DEF_HERE
+#include <asm-generic/atomic64.h>
+#endif
+
 /*
  * We use a hashed array of spinlocks to provide exclusive access
  * to each atomic64_t variable.  Since this is expected to used on

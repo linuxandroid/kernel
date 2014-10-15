@@ -7,7 +7,11 @@
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <unistd.h>
+#if !defined(CONFIG_SYNO_COMCERTO) || (!(defined(__APPLE__) || defined(__CYGWIN__)))
 #include <elf.h>
+#else
+#include "../../../../../tools/sstrip/include/elf.h"
+#endif
 
 #include "elfconfig.h"
 
@@ -146,22 +150,33 @@ static inline int is_shndx_special(unsigned int i)
 	return i != SHN_XINDEX && i >= SHN_LORESERVE && i <= SHN_HIRESERVE;
 }
 
-/*
- * Move reserved section indices SHN_LORESERVE..SHN_HIRESERVE out of
- * the way to -256..-1, to avoid conflicting with real section
- * indices.
+/* shndx is in [0..SHN_LORESERVE) U (SHN_HIRESERVE, 0xfffffff], thus:
+ * shndx == 0               <=> sechdrs[0]
+ * ......
+ * shndx == SHN_LORESERVE-1 <=> sechdrs[SHN_LORESERVE-1]
+ * shndx == SHN_HIRESERVE+1 <=> sechdrs[SHN_LORESERVE]
+ * shndx == SHN_HIRESERVE+2 <=> sechdrs[SHN_LORESERVE+1]
+ * ......
+ * fyi: sym->st_shndx is uint16, SHN_LORESERVE = ff00, SHN_HIRESERVE = ffff,
+ * so basically we map  0000..feff -> 0000..feff
+ *                      ff00..ffff -> (you are a bad boy, dont do it)
+ *                     10000..xxxx -> ff00..(xxxx-0x100)
  */
-#define SPECIAL(i) ((i) - (SHN_HIRESERVE + 1))
+static inline unsigned int shndx2secindex(unsigned int i)
+{
+	if (i <= SHN_HIRESERVE)
+		return i;
+	return i - (SHN_HIRESERVE + 1 - SHN_LORESERVE);
+}
 
 /* Accessor for sym->st_shndx, hides ugliness of "64k sections" */
 static inline unsigned int get_secindex(const struct elf_info *info,
 					const Elf_Sym *sym)
 {
-	if (is_shndx_special(sym->st_shndx))
-		return SPECIAL(sym->st_shndx);
 	if (sym->st_shndx != SHN_XINDEX)
 		return sym->st_shndx;
-	return info->symtab_shndx_start[sym - info->symtab_start];
+	return shndx2secindex(info->symtab_shndx_start[sym -
+						       info->symtab_start]);
 }
 
 /* file2alias.c */

@@ -2465,6 +2465,11 @@ void bond_3ad_lacpdu_recv(struct sk_buff *skb, struct bonding *bond,
 	if (!pskb_may_pull(skb, sizeof(struct lacpdu)))
 		return;
 
+#ifdef MY_ABC_HERE
+	if (!pskb_may_pull(skb, sizeof(struct lacpdu)))
+		return;
+
+#endif
 	read_lock(&bond->lock);
 	bond_3ad_rx_indication((struct lacpdu *) skb->data, slave, skb->len);
 	read_unlock(&bond->lock);

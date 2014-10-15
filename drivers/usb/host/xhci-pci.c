@@ -31,8 +31,12 @@
 #define PCI_DEVICE_ID_FRESCO_LOGIC_PDK	0x1000
 #define PCI_DEVICE_ID_FRESCO_LOGIC_FL1400	0x1400
 
+#ifndef MY_ABC_HERE // move to pci_id.h
 #define PCI_VENDOR_ID_ETRON		0x1b6f
 #define PCI_DEVICE_ID_ASROCK_P67	0x7023
+#else
+unsigned short xhci_vendor = 0;
+#endif
 
 static const char hcd_name[] = "xhci_hcd";
 
@@ -104,8 +108,16 @@ static void xhci_pci_quirks(struct device *dev, struct xhci_hcd *xhci)
 		xhci->quirks |= XHCI_SPURIOUS_REBOOT;
 		xhci->quirks |= XHCI_AVOID_BEI;
 	}
+
+#ifdef MY_ABC_HERE
+	xhci_vendor = pdev->vendor;
+#endif
+
 	if (pdev->vendor == PCI_VENDOR_ID_ETRON &&
 			pdev->device == PCI_DEVICE_ID_ASROCK_P67) {
+#ifdef MY_ABC_HERE
+		xhci_err(xhci, "Etron chip found.\n");
+#endif
 		xhci->quirks |= XHCI_RESET_ON_RESUME;
 		xhci_dbg(xhci, "QUIRK: Resetting on resume\n");
 		xhci->quirks |= XHCI_TRUST_TX_LENGTH;
@@ -151,6 +163,9 @@ static int xhci_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	struct xhci_hcd *xhci;
 	struct hc_driver *driver;
 	struct usb_hcd *hcd;
+
+	if (dev->vendor == PCI_VENDOR_ID_ETRON)
+		return -ENODEV;
 
 	driver = (struct hc_driver *)id->driver_data;
 	/* Register the USB 2.0 roothub.
@@ -343,7 +358,11 @@ int __init xhci_register_pci(void)
 	return pci_register_driver(&xhci_pci_driver);
 }
 
+#if defined(CONFIG_SYNO_COMCERTO)
+void xhci_unregister_pci(void)
+#else
 void __exit xhci_unregister_pci(void)
+#endif
 {
 	pci_unregister_driver(&xhci_pci_driver);
 }

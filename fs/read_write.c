@@ -20,6 +20,7 @@
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
 
+
 const struct file_operations generic_ro_fops = {
 	.llseek		= generic_file_llseek,
 	.read		= do_sync_read,
@@ -492,6 +493,122 @@ SYSCALL_DEFINE3(write, unsigned int, fd, const char __user *, buf,
 	return ret;
 }
 
+#ifdef MY_ABC_HERE
+asmlinkage ssize_t sys_recvfile(int fd, int s, loff_t *offset, size_t nbytes, size_t *rwbytes)
+{
+	int ret = 0;
+	struct file *file = NULL;                /* reg file struct */
+	struct socket *sock = NULL;
+	struct inode *inode;
+	size_t bytes_received = 0;
+	size_t bytes_written = 0;
+	loff_t pos;                 /* file offset */
+
+	if (!offset) {
+		ret = -EINVAL;
+		goto out;
+	}
+
+	if(copy_from_user(&pos, offset, sizeof(loff_t))) {
+		ret = -EFAULT;
+		goto out;
+	}
+
+	if (nbytes <= 0) {
+		if (nbytes < 0) {
+			ret = -EINVAL;
+		}
+		goto out;
+	}
+
+	/* check fd for regular file */
+	file = fget(fd);
+	if (!file) {
+		ret = -EBADF;
+		goto out;
+	}
+	if (!(file->f_mode & FMODE_WRITE)) {
+		ret = -EBADF;
+		goto out;
+	}
+
+	/* check socket fd */
+	sock = sockfd_lookup(s, &ret);
+	if((!sock) || ret)
+		goto out;
+
+	if(!sock->sk) {
+		/* not a socket */
+		ret = -EINVAL;
+		goto out;
+	}
+
+	inode = file->f_dentry->d_inode->i_mapping->host;
+	mutex_lock(&inode->i_mutex);
+	/* refer to sock_read->sock_recvmsg->tcp_recvmsg */
+	if (nbytes <= (MAX_PAGES_PER_RECVFILE * PAGE_SIZE)){
+			ret = do_recvfile(file, sock, &pos, nbytes, &bytes_received, &bytes_written);
+	} else {
+		/* this case should seldom/never happen */
+		size_t nbytes_left = nbytes;
+		size_t cBytereceived = 0;
+		size_t cBytewritten = 0;
+
+		do {
+				ret = do_recvfile(file, sock, &pos,
+							  (nbytes_left >= (MAX_PAGES_PER_RECVFILE * PAGE_SIZE)) ?
+							   (MAX_PAGES_PER_RECVFILE * PAGE_SIZE) : nbytes_left
+							  , &cBytereceived, &cBytewritten);
+
+			if(ret > 0) {
+				bytes_received += ret;
+				bytes_written += ret;
+				nbytes_left -= ret;
+			}
+			else  {
+				bytes_received += cBytereceived;
+				bytes_written += cBytewritten;
+				break;
+			}
+		} while(nbytes_left > 0);
+		if(ret >= 0)
+			ret = bytes_received;
+	}
+	mutex_unlock(&inode->i_mutex);
+
+	if(0 > ret && rwbytes) {
+#ifdef CONFIG_IA32_EMULATION
+		rwbytes[0]=bytes_received;
+		rwbytes[1]=bytes_written;
+#else
+		int ret_copy_to_user = 0;
+		ret_copy_to_user = copy_to_user(&rwbytes[0], &bytes_received, sizeof(size_t));
+		if (ret_copy_to_user < 0) {
+			ret = -ENOMEM;
+			goto out;
+		}
+		ret_copy_to_user = copy_to_user(&rwbytes[1], &bytes_written, sizeof(size_t));
+		if (ret_copy_to_user < 0) {
+			ret = -ENOMEM;
+			goto out;
+		}
+#endif
+	}
+
+	if (ret >= 0)
+		fsnotify_modify(file);
+
+out:
+	if(file)
+		fput(file);
+	if(sock)
+		fput(sock->file);
+
+	return ret;
+}
+
+#endif /* MY_ABC_HERE */
+
 SYSCALL_DEFINE(pread64)(unsigned int fd, char __user *buf,
 			size_t count, loff_t pos)
 {
@@ -922,6 +1039,10 @@ static ssize_t do_sendfile(int out_fd, int in_fd, loff_t *ppos,
 	if (!(out_file->f_mode & FMODE_WRITE))
 		goto fput_out;
 	retval = -EINVAL;
+#if defined(CONFIG_SYNO_ARMADA)
+	if (!out_file->f_op || !out_file->f_op->sendpage)
+		goto fput_out;
+#endif
 	in_inode = in_file->f_path.dentry->d_inode;
 	out_inode = out_file->f_path.dentry->d_inode;
 	retval = rw_verify_area(WRITE, out_file, &out_file->f_pos, count);
@@ -933,6 +1054,11 @@ static ssize_t do_sendfile(int out_fd, int in_fd, loff_t *ppos,
 		max = min(in_inode->i_sb->s_maxbytes, out_inode->i_sb->s_maxbytes);
 
 	pos = *ppos;
+#if defined(CONFIG_SYNO_ARMADA)
+	retval = -EINVAL;
+	if (unlikely(pos < 0))
+		goto fput_out;
+#endif
 	if (unlikely(pos + count > max)) {
 		retval = -EOVERFLOW;
 		if (pos >= max)

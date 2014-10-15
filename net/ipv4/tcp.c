@@ -277,6 +277,10 @@
 #include <asm/uaccess.h>
 #include <asm/ioctls.h>
 
+#ifdef MY_ABC_HERE
+#include <linux/pci.h>
+#endif /* MY_ABC_HERE */
+
 int sysctl_tcp_fin_timeout __read_mostly = TCP_FIN_TIMEOUT;
 
 struct percpu_counter tcp_orphan_count;
@@ -592,7 +596,15 @@ static int __tcp_splice_read(struct sock *sk, struct tcp_splice_state *tss)
 
 	return tcp_read_sock(sk, &rd_desc, tcp_splice_data_recv);
 }
-
+#if defined(CONFIG_SYNO_COMCERTO) && defined(CONFIG_COMCERTO_SPLICE_PROF)
+unsigned int splicer_time_counter[256];
+unsigned int splicer_reqtime_counter[256];
+unsigned int splicer_data_counter[256];
+unsigned int splicer_tcp_rsock_counter[64];
+static struct timeval last_splicer;
+unsigned int init_splicer_prof = 0;
+extern unsigned int enable_splice_prof;
+#endif
 /**
  *  tcp_splice_read - splice data from TCP socket to a pipe
  * @sock:	socket to splice from
@@ -618,7 +630,28 @@ ssize_t tcp_splice_read(struct socket *sock, loff_t *ppos,
 	long timeo;
 	ssize_t spliced;
 	int ret;
+#if defined(CONFIG_SYNO_COMCERTO) && defined(CONFIG_COMCERTO_SPLICE_PROF)
+	struct timeval now;
+	int diff_time_ms;
 
+	if (enable_splice_prof) {
+		do_gettimeofday(&now);
+		if (init_splicer_prof) {
+			diff_time_ms = ((now.tv_sec - last_splicer.tv_sec) * 1000) + ((now.tv_usec - last_splicer.tv_usec) / 1000);
+			if (diff_time_ms < 1000) {
+				splicer_time_counter[diff_time_ms >> 3]++;
+			}
+			else {
+				splicer_time_counter[255]++;
+			}
+		}
+		if (len < (1 <<21))
+			splicer_data_counter[(len >> 13) & 0xFF]++;
+		else
+			splicer_data_counter[255]++;
+		last_splicer = now;
+	}
+#endif
 	sock_rps_record_flow(sk);
 	/*
 	 * We can't seek on a socket input
@@ -629,7 +662,18 @@ ssize_t tcp_splice_read(struct socket *sock, loff_t *ppos,
 	ret = spliced = 0;
 
 	lock_sock(sk);
+#if defined(CONFIG_SYNO_COMCERTO) && defined(CONFIG_COMCERTO_SPLICE_PROF)
+	/* Need locked socket*/
+	if (enable_splice_prof) {
+		const struct tcp_sock *tp = tcp_sk(sk);
+		int rsock_qsize = tp->rcv_nxt - tp->copied_seq;
 
+		if (rsock_qsize < (4 * 1024 * 1024))
+			splicer_tcp_rsock_counter[(rsock_qsize >> 16) & 0x3F]++;
+		else
+			splicer_tcp_rsock_counter[63]++;
+	}
+#endif
 	timeo = sock_rcvtimeo(sk, sock->file->f_flags & O_NONBLOCK);
 	while (tss.len) {
 		ret = __tcp_splice_read(sk, &tss);
@@ -682,6 +726,23 @@ ssize_t tcp_splice_read(struct socket *sock, loff_t *ppos,
 
 	release_sock(sk);
 
+#if defined(CONFIG_SYNO_COMCERTO) && defined(CONFIG_COMCERTO_SPLICE_PROF)
+	if (enable_splice_prof) {
+		do_gettimeofday(&now);
+
+		diff_time_ms = ((now.tv_sec - last_splicer.tv_sec) * 1000) + ((now.tv_usec - last_splicer.tv_usec) / 1000);
+		if (diff_time_ms < 1000) {//Don't record useless data
+			splicer_reqtime_counter[diff_time_ms >> 3]++;
+		}
+		else
+			splicer_reqtime_counter[255]++;
+
+		if(!init_splicer_prof)
+			init_splicer_prof = 1;
+
+		last_splicer = now;
+	}
+#endif
 	if (spliced)
 		return spliced;
 
@@ -1443,6 +1504,20 @@ int tcp_recvmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 
 		if (skb)
 			available = TCP_SKB_CB(skb)->seq + skb->len - (*seq);
+#if defined(CONFIG_SYNO_ARMADA) && defined(CONFIG_SPLICE_NET_DMA_SUPPORT)
+		if (msg->msg_flags & MSG_KERNSPACE) {
+			if ((available >= target) &&
+			    (len > sysctl_tcp_dma_copybreak) && !(flags & MSG_PEEK) &&
+			    !sysctl_tcp_low_latency &&
+			    dma_find_channel(DMA_MEMCPY)) {
+				preempt_enable_no_resched();
+				tp->ucopy.pinned_list =
+						dma_pin_kernel_iovec_pages(msg->msg_iov, len);
+			} else {
+				preempt_enable_no_resched();
+			}
+		}
+#else
 		if ((available < target) &&
 		    (len > sysctl_tcp_dma_copybreak) && !(flags & MSG_PEEK) &&
 		    !sysctl_tcp_low_latency &&
@@ -1453,12 +1528,38 @@ int tcp_recvmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 		} else {
 			preempt_enable_no_resched();
 		}
+#endif
 	}
 #endif
 
 	do {
 		u32 offset;
 
+#ifdef MY_ABC_HERE
+        if(flags &  MSG_NOCATCHSIGNAL) {
+			/* Original when we have recvfile(), we remove the following
+			 * sygnal_pending(). But it would cause system hang when smbd
+			 * is receive file and user "kill -9" it. So I copy the
+			 * code back. But in order to keep track, I did not remove
+			 * our define.
+			 */
+			if (signal_pending(current)) {
+				if (sigismember(&current->pending.signal, SIGQUIT) ||
+					sigismember(&current->pending.signal, SIGABRT) ||
+					sigismember(&current->pending.signal, SIGKILL) ||
+					sigismember(&current->pending.signal, SIGTERM) ||
+					sigismember(&current->pending.signal, SIGSTOP) ) {
+
+					printk("%s (%d) Avoiding recvfile() hangs.\n", __FILE__, __LINE__);
+					if (copied)
+						break;
+					copied = timeo ? sock_intr_errno(timeo) : -EAGAIN;
+					break;
+				}
+			}
+        }
+        else
+#endif /* MY_ABC_HERE */
 		/* Are we at urgent data? Stop if we have read anything or have SIGURG pending. */
 		if (tp->urg_data && tp->urg_seq == *seq) {
 			if (copied)
@@ -1510,6 +1611,11 @@ int tcp_recvmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 				break;
 
 			if (sk->sk_err) {
+#ifdef MY_ABC_HERE
+				if ( (msg->msg_flags & MSG_KERNSPACE) &&
+					ECONNRESET == sk->sk_err )
+					printk("connection reset by peer.\n");
+#endif
 				copied = sock_error(sk);
 				break;
 			}
@@ -1693,6 +1799,11 @@ do_prequeue:
 			} else
 #endif
 			{
+#ifdef MY_ABC_HERE
+				if(msg->msg_flags & MSG_KERNSPACE)
+					err = skb_copy_datagram_iovec1(skb, offset, msg->msg_iov, used);
+				else
+#endif /* MY_ABC_HERE */
 				err = skb_copy_datagram_iovec(skb, offset,
 						msg->msg_iov, used);
 				if (err) {
@@ -1760,10 +1871,16 @@ skip_copy:
 	tp->ucopy.dma_chan = NULL;
 
 	if (tp->ucopy.pinned_list) {
+#ifdef CONFIG_SPLICE_NET_DMA_SUPPORT
+		if(msg->msg_flags & MSG_KERNSPACE)
+			dma_unpin_kernel_iovec_pages(tp->ucopy.pinned_list);
+		else
+#endif
 		dma_unpin_iovec_pages(tp->ucopy.pinned_list);
 		tp->ucopy.pinned_list = NULL;
 	}
 #endif
+
 
 	/* According to UNIX98, msg_name/msg_namelen are ignored
 	 * on connected socket. I was just happy when found this 8) --ANK

@@ -1294,6 +1294,7 @@ static void uart_close(struct tty_struct *tty, struct file *filp)
 		return;
 	}
 
+
 	/*
 	 * Now we wait for the transmit buffer to clear; and we notify
 	 * the line discipline to only process XON/XOFF characters by
@@ -1884,6 +1885,16 @@ static int serial_match_port(struct device *dev, void *data)
 	return dev->devt == devt; /* Actually, only one tty per port */
 }
 
+#if defined(CONFIG_SYNO_ARMADA_ARCH) && defined(CONFIG_STANDBY_UART_WAKE)
+int uart_suspend_port(struct uart_driver *drv, struct uart_port *uport)
+{
+	return 0;
+}
+int uart_resume_port(struct uart_driver *drv, struct uart_port *uport)
+{
+	return 0;
+}
+#else
 int uart_suspend_port(struct uart_driver *drv, struct uart_port *uport)
 {
 	struct uart_state *state = drv->state + uport->line;
@@ -2031,6 +2042,7 @@ int uart_resume_port(struct uart_driver *drv, struct uart_port *uport)
 
 	return 0;
 }
+#endif
 
 static inline void
 uart_report_port(struct uart_driver *drv, struct uart_port *port)
@@ -2049,6 +2061,11 @@ uart_report_port(struct uart_driver *drv, struct uart_port *port)
 	case UPIO_MEM32:
 	case UPIO_AU:
 	case UPIO_TSI:
+#if defined(CONFIG_SYNO_ARMADA_ARCH) || defined(CONFIG_SYNO_C2K_SERIAL_FIX)
+#if defined(CONFIG_ARCH_ARMADA370) || defined(CONFIG_ARCH_ARMADA_XP) || defined(CONFIG_SYNO_C2K_SERIAL_FIX)
+	case UPIO_DWAPB:
+#endif
+#endif
 		snprintf(address, sizeof(address),
 			 "MMIO 0x%llx", (unsigned long long)port->mapbase);
 		break;
@@ -2462,6 +2479,11 @@ int uart_match_port(struct uart_port *port1, struct uart_port *port2)
 	case UPIO_MEM32:
 	case UPIO_AU:
 	case UPIO_TSI:
+#if defined(CONFIG_SYNO_ARMADA_ARCH) || defined(CONFIG_SYNO_C2K_SERIAL_FIX)
+#if defined(CONFIG_ARCH_ARMADA370) || defined(CONFIG_ARCH_ARMADA_XP) || defined(CONFIG_SYNO_C2K_SERIAL_FIX)
+	case UPIO_DWAPB:
+#endif
+#endif
 		return (port1->mapbase == port2->mapbase);
 	}
 	return 0;

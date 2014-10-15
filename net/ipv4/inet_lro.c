@@ -324,9 +324,9 @@ static int __lro_proc_skb(struct net_lro_mgr *lro_mgr, struct sk_buff *skb,
 	u64 flags;
 	int vlan_hdr_len = 0;
 
-	if (!lro_mgr->get_skb_header ||
-	    lro_mgr->get_skb_header(skb, (void *)&iph, (void *)&tcph,
-				    &flags, priv))
+	if (!lro_mgr->get_skb_header
+	    || lro_mgr->get_skb_header(skb, (void *)&iph, (void *)&tcph,
+				       &flags, priv))
 		goto out;
 
 	if (!(flags & LRO_IPV4) || !(flags & LRO_TCP))

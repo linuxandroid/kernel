@@ -100,6 +100,15 @@ static int ioctl_internal_command(struct scsi_device *sdev, char *cmd,
 
 	if ((driver_byte(result) & DRIVER_SENSE) &&
 	    (scsi_sense_valid(&sshdr))) {
+#ifdef MY_ABC_HERE
+		if (cmd[0] == START_STOP) {
+			if (sdev->nospindown == 0) {
+				sdev->nospindown = 1;
+				printk(KERN_WARNING"host %d, id %d, lun %d, does not support spindown\n",
+					   sdev->host->host_no, sdev->id, sdev->lun);
+			}
+		}
+#endif /* MY_ABC_HERE */
 		switch (sshdr.sense_key) {
 		case ILLEGAL_REQUEST:
 			if (cmd[0] == ALLOW_MEDIUM_REMOVAL)

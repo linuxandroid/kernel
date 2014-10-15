@@ -828,6 +828,22 @@ asmlinkage long sys_syncfs(int fd);
 
 int kernel_execve(const char *filename, const char *const argv[], const char *const envp[]);
 
+#ifdef CONFIG_IA32_EMULATION
+#ifdef MY_ABC_HERE
+asmlinkage ssize_t sys_recvfile(int fd, int s, loff_t *offset, size_t nbytes, size_t *rwbytes);
+#endif
+#endif
+
+#ifdef CONFIG_SYNO_NOTIFY
+asmlinkage long sys_SYNONotifyInit(unsigned int event_f_flags);
+asmlinkage long sys_SYNONotifyAddWatch(int synotify_fd, const char  __user *pathname, u64 mask);
+asmlinkage long sys_SYNONotifyRemoveWatch(int synotify_fd, const char  __user *pathname, u64 mask);
+asmlinkage long sys_SYNONotifyAddWatch32(int synotify_fd, const char  __user *pathname, u32 mask);
+asmlinkage long sys_SYNONotifyRemoveWatch32(int synotify_fd, const char  __user *pathname, u32 mask);
+#endif /* CONFIG_SYNO_NOTIFY */
+#ifdef MY_ABC_HERE
+asmlinkage long sys_SYNOArchiveOverwrite(unsigned int fd, unsigned int flags);
+#endif
 
 asmlinkage long sys_perf_event_open(
 		struct perf_event_attr __user *attr_uptr,

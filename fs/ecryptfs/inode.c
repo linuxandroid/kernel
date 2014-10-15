@@ -36,6 +36,10 @@
 #include <asm/unaligned.h>
 #include "ecryptfs_kernel.h"
 
+#ifdef CONFIG_FS_SYNO_ACL
+#include "../synoacl_int.h"
+#endif
+
 static struct dentry *lock_parent(struct dentry *dentry)
 {
 	struct dentry *dir;
@@ -201,7 +205,7 @@ out_unlock:
  */
 static struct inode *
 ecryptfs_do_create(struct inode *directory_inode,
-		   struct dentry *ecryptfs_dentry, int mode)
+		   struct dentry *ecryptfs_dentry, umode_t mode)
 {
 	int rc;
 	struct dentry *lower_dentry;
@@ -274,8 +278,12 @@ int ecryptfs_initialize_file(struct dentry *ecryptfs_dentry,
 		goto out;
 	}
 	rc = ecryptfs_write_metadata(ecryptfs_dentry, ecryptfs_inode);
-	if (rc)
+	if (rc) {
+#ifdef MY_ABC_HERE
+		if (-EDQUOT != rc && -EIO != rc && -ENOSPC != rc)
+#endif
 		printk(KERN_ERR "Error writing headers; rc = [%d]\n", rc);
+	}
 	ecryptfs_put_lower_file(ecryptfs_inode);
 out:
 	return rc;
@@ -294,7 +302,7 @@ out:
  */
 static int
 ecryptfs_create(struct inode *directory_inode, struct dentry *ecryptfs_dentry,
-		int mode, struct nameidata *nd)
+		umode_t mode, struct nameidata *nd)
 {
 	struct inode *ecryptfs_inode;
 	int rc;
@@ -310,6 +318,7 @@ ecryptfs_create(struct inode *directory_inode, struct dentry *ecryptfs_dentry,
 	/* At this point, a file exists on "disk"; we need to make sure
 	 * that this on disk file is prepared to be an ecryptfs file */
 	rc = ecryptfs_initialize_file(ecryptfs_dentry, ecryptfs_inode);
+
 	if (rc) {
 		ecryptfs_do_unlink(directory_inode, ecryptfs_dentry,
 				   ecryptfs_inode);
@@ -321,6 +330,17 @@ ecryptfs_create(struct inode *directory_inode, struct dentry *ecryptfs_dentry,
 	d_instantiate(ecryptfs_dentry, ecryptfs_inode);
 	unlock_new_inode(ecryptfs_inode);
 out:
+#ifdef MY_ABC_HERE
+	/* if the encrypted file created fail because QUOTA FULL (-EDQUOT), we delete it to
+	 * prevent can't crate the same file again */
+	if (-EDQUOT == rc || -EIO == rc || -ENOSPC == rc) {
+		struct dentry *lower_dentry = ecryptfs_dentry_to_lower(ecryptfs_dentry);
+		struct inode *lower_dir_inode = ecryptfs_inode_to_lower(directory_inode);
+
+		vfs_unlink(lower_dir_inode, lower_dentry);
+		d_drop(lower_dentry);
+	}
+#endif
 	return rc;
 }
 
@@ -463,7 +483,7 @@ static struct dentry *ecryptfs_lookup(struct inode *ecryptfs_dir_inode,
 		ecryptfs_dentry->d_name.len);
 	if (rc) {
 		printk(KERN_ERR "%s: Error attempting to encrypt and encode "
-		       "filename; rc = [%d]\n", __func__, rc);
+				"filename; rc = [%d]\n", __func__, rc);
 		goto out_d_drop;
 	}
 	mutex_lock(&lower_dir_dentry->d_inode->i_mutex);
@@ -568,7 +588,7 @@ out_lock:
 	return rc;
 }
 
-static int ecryptfs_mkdir(struct inode *dir, struct dentry *dentry, int mode)
+static int ecryptfs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 {
 	int rc;
 	struct dentry *lower_dentry;
@@ -616,7 +636,7 @@ static int ecryptfs_rmdir(struct inode *dir, struct dentry *dentry)
 }
 
 static int
-ecryptfs_mknod(struct inode *dir, struct dentry *dentry, int mode, dev_t dev)
+ecryptfs_mknod(struct inode *dir, struct dentry *dentry, umode_t mode, dev_t dev)
 {
 	int rc;
 	struct dentry *lower_dentry;
@@ -638,6 +658,15 @@ out:
 		d_drop(dentry);
 	return rc;
 }
+
+#ifdef CONFIG_FS_SYNO_ACL
+static void CopySynoArchive(struct dentry *ecrypt_entry, struct dentry *lower_entry)
+{
+	if (ecrypt_entry && ecrypt_entry->d_inode && lower_entry && lower_entry->d_inode) {
+		ecrypt_entry->d_inode->i_mode2 = lower_entry->d_inode->i_mode2;
+	}
+}
+#endif
 
 static int
 ecryptfs_rename(struct inode *old_dir, struct dentry *old_dentry,
@@ -671,6 +700,12 @@ ecryptfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 	}
 	rc = vfs_rename(lower_old_dir_dentry->d_inode, lower_old_dentry,
 			lower_new_dir_dentry->d_inode, lower_new_dentry);
+
+#ifdef CONFIG_FS_SYNO_ACL
+	CopySynoArchive(old_dentry, lower_old_dentry);
+	CopySynoArchive(new_dentry, lower_new_dentry);
+#endif
+
 	if (rc)
 		goto out_lock;
 	if (target_inode)
@@ -825,7 +860,9 @@ static int truncate_upper(struct dentry *dentry, struct iattr *ia,
 	struct inode *inode = dentry->d_inode;
 	struct ecryptfs_crypt_stat *crypt_stat;
 	loff_t i_size = i_size_read(inode);
+#ifndef MY_ABC_HERE
 	loff_t lower_size_before_truncate;
+#endif
 	loff_t lower_size_after_truncate;
 
 	if (unlikely((ia->ia_size == i_size))) {
@@ -836,6 +873,8 @@ static int truncate_upper(struct dentry *dentry, struct iattr *ia,
 	if (rc)
 		return rc;
 	crypt_stat = &ecryptfs_inode_to_private(dentry->d_inode)->crypt_stat;
+
+#ifndef MY_ABC_HERE
 	/* Switch on growing or shrinking file */
 	if (ia->ia_size > i_size) {
 		char zero[] = { 0x00 };
@@ -855,12 +894,18 @@ static int truncate_upper(struct dentry *dentry, struct iattr *ia,
 		size_t num_zeros = (PAGE_CACHE_SIZE
 				    - (ia->ia_size & ~PAGE_CACHE_MASK));
 
+#endif
 		if (!(crypt_stat->flags & ECRYPTFS_ENCRYPTED)) {
+#ifdef MY_ABC_HERE
+			ecryptfs_truncate_setsize(inode, ia->ia_size);
+#else
 			truncate_setsize(inode, ia->ia_size);
+#endif
 			lower_ia->ia_size = ia->ia_size;
 			lower_ia->ia_valid |= ATTR_SIZE;
 			goto out;
 		}
+#ifndef MY_ABC_HERE
 		if (num_zeros) {
 			char *zeros_virt;
 
@@ -879,26 +924,42 @@ static int truncate_upper(struct dentry *dentry, struct iattr *ia,
 				goto out;
 			}
 		}
+#endif
+#ifdef MY_ABC_HERE
+		ecryptfs_truncate_setsize(inode, ia->ia_size);
+#else
 		truncate_setsize(inode, ia->ia_size);
+#endif
 		rc = ecryptfs_write_inode_size_to_metadata(inode);
 		if (rc) {
+#ifdef MY_ABC_HERE
+			if (-EDQUOT != rc && -EIO != rc && -ENOSPC != rc)
+#endif
 			printk(KERN_ERR	"Problem with "
 			       "ecryptfs_write_inode_size_to_metadata; "
 			       "rc = [%d]\n", rc);
 			goto out;
 		}
+#ifndef MY_ABC_HERE
 		/* We are reducing the size of the ecryptfs file, and need to
 		 * know if we need to reduce the size of the lower file. */
 		lower_size_before_truncate =
 		    upper_size_to_lower_size(crypt_stat, i_size);
+#endif
 		lower_size_after_truncate =
 		    upper_size_to_lower_size(crypt_stat, ia->ia_size);
+#ifdef MY_ABC_HERE
+		lower_ia->ia_size = lower_size_after_truncate;
+		lower_ia->ia_valid |= ATTR_SIZE;
+#else
 		if (lower_size_after_truncate < lower_size_before_truncate) {
 			lower_ia->ia_size = lower_size_after_truncate;
 			lower_ia->ia_valid |= ATTR_SIZE;
 		} else
 			lower_ia->ia_valid &= ~ATTR_SIZE;
 	}
+#endif
+
 out:
 	ecryptfs_put_lower_file(inode);
 	return rc;
@@ -956,6 +1017,146 @@ int ecryptfs_truncate(struct dentry *dentry, loff_t new_length)
 	}
 	return rc;
 }
+
+#ifdef MY_ABC_HERE
+static int ecryptfs_syno_set_crtime(struct dentry *dentry, struct timespec *time)
+{
+	int error;
+	struct dentry *lower_dentry = ecryptfs_dentry_to_lower(dentry);
+
+	error = syno_op_set_crtime(lower_dentry, time);
+	if (!error) {
+		dentry->d_inode->i_CreateTime = *time;
+	}
+	return error;
+}
+#endif
+
+#ifdef MY_ABC_HERE
+static int ecryptfs_syno_set_archive_bit(struct dentry *dentry, unsigned int arbit)
+{
+	int error;
+	struct dentry *lower_dentry = ecryptfs_dentry_to_lower(dentry);
+
+	error = syno_op_set_archive_bit(lower_dentry, arbit);
+	if (!error) {
+		dentry->d_inode->i_mode2 = arbit;
+	}
+	return error;
+}
+#endif //MY_ABC_HERE
+
+#ifdef MY_ABC_HERE
+static int ecryptfs_syno_set_archive_ver(struct dentry *dentry, u32 version)
+{
+	struct dentry *lower_dentry = ecryptfs_dentry_to_lower(dentry);
+
+	if (!lower_dentry->d_inode->i_op->syno_set_archive_ver)
+		return -EINVAL;
+	return lower_dentry->d_inode->i_op->syno_set_archive_ver(lower_dentry, version);
+}
+
+static int ecryptfs_syno_get_archive_ver(struct dentry *dentry, u32 *version)
+{
+	struct dentry *lower_dentry = ecryptfs_dentry_to_lower(dentry);
+
+	if (!lower_dentry->d_inode->i_op->syno_get_archive_ver)
+		return -EINVAL;
+	return lower_dentry->d_inode->i_op->syno_get_archive_ver(lower_dentry, version);
+}
+#endif
+
+#ifdef CONFIG_FS_SYNO_ACL
+static int ecryptfs_get_syno_acl_xattr(struct dentry *dentry, int cmd, void *value, size_t size)
+{
+	struct dentry *lower_dentry = ecryptfs_dentry_to_lower(dentry);
+
+	return synoacl_mod_get_acl_xattr(lower_dentry, cmd, value, size);
+}
+
+static int
+ecryptfs_syno_inode_change_ok(struct dentry *dentry, struct iattr *attr)
+{
+	struct dentry *lower_dentry = ecryptfs_dentry_to_lower(dentry);
+
+	return synoacl_mod_inode_change_ok(lower_dentry, attr);
+}
+
+static int
+ecryptfs_syno_arbit_chg_ok(struct dentry *dentry, unsigned int cmd, int tag, int mask)
+{
+	struct dentry *lower_dentry = ecryptfs_dentry_to_lower(dentry);
+
+	return synoacl_mod_archive_change_ok(lower_dentry, cmd, tag, mask);
+}
+
+static int
+ecryptfs_syno_setattr_post(struct dentry *dentry, struct iattr *attr)
+{
+	struct dentry *lower_dentry = ecryptfs_dentry_to_lower(dentry);
+
+	return synoacl_mod_setattr_post(lower_dentry, attr);
+}
+/*
+ * Check Only 1 time.
+ */
+static int
+ecryptfs_syno_exec_permission(struct dentry *dentry)
+{
+	struct dentry *lower_dentry = ecryptfs_dentry_to_lower(dentry);
+
+	return synoacl_mod_exec_permission(lower_dentry);
+}
+
+static int
+ecryptfs_syno_acl_access(struct dentry *dentry, int mask)
+{
+	struct dentry *lower_dentry = ecryptfs_dentry_to_lower(dentry);
+
+	return synoacl_mod_access(lower_dentry, mask);
+}
+
+static void
+ecryptfs_syno_acl_to_mode(struct dentry *dentry, struct kstat *stat)
+{
+	struct dentry *lower_dentry = ecryptfs_dentry_to_lower(dentry);
+
+	synoacl_mod_to_mode(lower_dentry, stat);
+}
+/*
+ * For some operations(like vfs_create ), it checks 2 times.
+ * For some operations(like openat() or SYNOACLPermCheck()), it checks only 1 times.
+ */
+static int
+ecryptfs_syno_permission(struct dentry *dentry, int mask)
+{
+	struct dentry *lower_dentry = ecryptfs_dentry_to_lower(dentry);
+
+	return synoacl_mod_permission(lower_dentry, mask);
+}
+static int
+ecryptfs_syno_acl_init(struct dentry *dentry, struct inode *inode)
+{
+	struct dentry *lower_dentry = ecryptfs_dentry_to_lower(dentry);
+
+	return synoacl_mod_init_acl(lower_dentry, lower_dentry->d_inode);
+}
+#endif //CONFIG_FS_SYNO_ACL
+
+#ifdef MY_ABC_HERE
+static int 
+ecryptfs_syno_getattr(struct dentry *dentry, struct kstat *st, int flags)
+{
+	struct inode *lower_inode = NULL;
+	struct dentry *lower_dentry = ecryptfs_dentry_to_lower(dentry);
+
+	lower_inode = lower_dentry->d_inode;
+	if (lower_inode->i_op->syno_getattr) {
+		return lower_inode->i_op->syno_getattr(lower_dentry, st, flags);
+	}
+	return -EOPNOTSUPP;
+}
+#endif //MY_ABC_HERE
 
 static int
 ecryptfs_permission(struct inode *inode, int mask)
@@ -1026,9 +1227,17 @@ static int ecryptfs_setattr(struct dentry *dentry, struct iattr *ia)
 	}
 	mutex_unlock(&crypt_stat->cs_mutex);
 
+#ifdef CONFIG_FS_SYNO_ACL
+	if (!IS_SYNOACL(lower_dentry)) {
+		rc = inode_change_ok(inode, ia);
+		if (rc)
+			goto out;
+	}
+#else
 	rc = inode_change_ok(inode, ia);
 	if (rc)
 		goto out;
+#endif
 	if (ia->ia_valid & ATTR_SIZE) {
 		rc = ecryptfs_inode_newsize_ok(inode, ia->ia_size);
 		if (rc)
@@ -1110,6 +1319,15 @@ ecryptfs_setxattr(struct dentry *dentry, const char *name, const void *value,
 		rc = -EOPNOTSUPP;
 		goto out;
 	}
+#ifdef CONFIG_FS_SYNO_ACL
+	if (name && !strcmp(name, SYNO_ACL_XATTR_ACCESS)) {
+		/* 
+		 * Copy synoarchive since synoacl archive may be changed after setxattr 
+		 * No need to lock dentry because lock has done by vfs_setxattr().
+		 */
+		dentry->d_inode->i_mode2 = lower_dentry->d_inode->i_mode2;
+	}
+#endif
 
 	rc = vfs_setxattr(lower_dentry, name, value, size, flags);
 	if (!rc)
@@ -1128,6 +1346,7 @@ ecryptfs_getxattr_lower(struct dentry *lower_dentry, const char *name,
 		rc = -EOPNOTSUPP;
 		goto out;
 	}
+
 	mutex_lock(&lower_dentry->d_inode->i_mutex);
 	rc = lower_dentry->d_inode->i_op->getxattr(lower_dentry, name, value,
 						   size);
@@ -1168,6 +1387,7 @@ static int ecryptfs_removexattr(struct dentry *dentry, const char *name)
 	struct dentry *lower_dentry;
 
 	lower_dentry = ecryptfs_dentry_to_lower(dentry);
+
 	if (!lower_dentry->d_inode->i_op->removexattr) {
 		rc = -EOPNOTSUPP;
 		goto out;
@@ -1180,6 +1400,19 @@ out:
 }
 
 const struct inode_operations ecryptfs_symlink_iops = {
+#ifdef MY_ABC_HERE
+	.syno_getattr = ecryptfs_syno_getattr,
+#endif
+#ifdef MY_ABC_HERE
+	.syno_set_crtime = ecryptfs_syno_set_crtime,
+#endif
+#ifdef MY_ABC_HERE
+	.syno_set_archive_bit = ecryptfs_syno_set_archive_bit,
+#endif
+#ifdef MY_ABC_HERE
+	.syno_get_archive_ver = ecryptfs_syno_get_archive_ver,
+	.syno_set_archive_ver = ecryptfs_syno_set_archive_ver,
+#endif
 	.readlink = ecryptfs_readlink,
 	.follow_link = ecryptfs_follow_link,
 	.put_link = ecryptfs_put_link,
@@ -1202,6 +1435,31 @@ const struct inode_operations ecryptfs_dir_iops = {
 	.rmdir = ecryptfs_rmdir,
 	.mknod = ecryptfs_mknod,
 	.rename = ecryptfs_rename,
+#ifdef CONFIG_FS_SYNO_ACL
+	.getattr = ecryptfs_getattr,
+	.syno_permission = ecryptfs_syno_permission,
+	.syno_acl_access = ecryptfs_syno_acl_access,
+	.syno_acl_xattr_get = ecryptfs_get_syno_acl_xattr,
+	.syno_exec_permission = ecryptfs_syno_exec_permission,
+	.syno_inode_change_ok = ecryptfs_syno_inode_change_ok,
+	.syno_arbit_chg_ok = ecryptfs_syno_arbit_chg_ok,
+	.syno_setattr_post = ecryptfs_syno_setattr_post,
+	.syno_acl_to_mode = ecryptfs_syno_acl_to_mode,
+	.syno_acl_init = ecryptfs_syno_acl_init,
+#endif
+#ifdef MY_ABC_HERE
+	.syno_getattr = ecryptfs_syno_getattr,
+#endif
+#ifdef MY_ABC_HERE
+	.syno_set_crtime = ecryptfs_syno_set_crtime,
+#endif
+#ifdef MY_ABC_HERE
+	.syno_set_archive_bit = ecryptfs_syno_set_archive_bit,
+#endif
+#ifdef MY_ABC_HERE
+	.syno_get_archive_ver = ecryptfs_syno_get_archive_ver,
+	.syno_set_archive_ver = ecryptfs_syno_set_archive_ver,
+#endif
 	.permission = ecryptfs_permission,
 	.setattr = ecryptfs_setattr,
 	.setxattr = ecryptfs_setxattr,
@@ -1211,6 +1469,30 @@ const struct inode_operations ecryptfs_dir_iops = {
 };
 
 const struct inode_operations ecryptfs_main_iops = {
+#ifdef CONFIG_FS_SYNO_ACL
+	.syno_acl_xattr_get = ecryptfs_get_syno_acl_xattr,
+	.syno_acl_access = ecryptfs_syno_acl_access,
+	.syno_permission = ecryptfs_syno_permission,
+	.syno_exec_permission = ecryptfs_syno_exec_permission,
+	.syno_inode_change_ok = ecryptfs_syno_inode_change_ok,
+	.syno_arbit_chg_ok = ecryptfs_syno_arbit_chg_ok,
+	.syno_setattr_post = ecryptfs_syno_setattr_post,
+	.syno_acl_to_mode = ecryptfs_syno_acl_to_mode,
+	.syno_acl_init = ecryptfs_syno_acl_init,
+#endif
+#ifdef MY_ABC_HERE
+	.syno_getattr = ecryptfs_syno_getattr,
+#endif
+#ifdef MY_ABC_HERE
+	.syno_set_crtime = ecryptfs_syno_set_crtime,
+#endif
+#ifdef MY_ABC_HERE
+	.syno_set_archive_bit = ecryptfs_syno_set_archive_bit,
+#endif
+#ifdef MY_ABC_HERE
+	.syno_get_archive_ver = ecryptfs_syno_get_archive_ver,
+	.syno_set_archive_ver = ecryptfs_syno_set_archive_ver,
+#endif
 	.permission = ecryptfs_permission,
 	.setattr = ecryptfs_setattr,
 	.getattr = ecryptfs_getattr,

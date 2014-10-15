@@ -107,9 +107,16 @@ static int quiet_error(struct buffer_head *bh)
 static void buffer_io_error(struct buffer_head *bh)
 {
 	char b[BDEVNAME_SIZE];
+
+#ifdef MY_ABC_HERE
+	    if (printk_ratelimit()) {
+#endif
 	printk(KERN_ERR "Buffer I/O error on device %s, logical block %Lu\n",
 			bdevname(bh->b_bdev, b),
 			(unsigned long long)bh->b_blocknr);
+#ifdef MY_ABC_HERE
+		}
+#endif
 }
 
 /*
@@ -1019,7 +1026,12 @@ grow_dev_page(struct block_device *bdev, sector_t block,
 		bh = page_buffers(page);
 		if (bh->b_size == size) {
 			end_block = init_page_buffers(page, bdev,
+#ifdef CONFIG_SYNO_ARMADA
+				(sector_t)((sector_t)index <<
+					(sector_t)sizebits), size);
+#else
 						index << sizebits, size);
+#endif
 			goto done;
 		}
 		if (!try_to_free_buffers(page))
@@ -1040,7 +1052,13 @@ grow_dev_page(struct block_device *bdev, sector_t block,
 	 */
 	spin_lock(&inode->i_mapping->private_lock);
 	link_dev_buffers(page, bh);
+#ifdef CONFIG_SYNO_ARMADA
+	end_block = init_page_buffers(page, bdev,
+			(sector_t)((sector_t)index << (sector_t)sizebits),
+			size);
+#else
 	end_block = init_page_buffers(page, bdev, index << sizebits, size);
+#endif
 	spin_unlock(&inode->i_mapping->private_lock);
 done:
 	ret = (block < end_block) ? 1 : -ENXIO;
@@ -1153,7 +1171,15 @@ __getblk_slow(struct block_device *bdev, sector_t block, int size)
  */
 void mark_buffer_dirty(struct buffer_head *bh)
 {
+#ifdef MY_ABC_HERE
+	static int SynoWarnings = 0;
+	if (!buffer_uptodate(bh) && !SynoWarnings) {
+		SynoWarnings = 1;
+		printk("%s: Buffer head isn't up to date\n", __FUNCTION__);
+	}
+#else
 	WARN_ON_ONCE(!buffer_uptodate(bh));
+#endif
 
 	/*
 	 * Very *carefully* optimize the it-is-already-dirty case.
@@ -2337,8 +2363,8 @@ EXPORT_SYMBOL(block_commit_write);
  * beyond EOF, then the page is guaranteed safe against truncation until we
  * unlock the page.
  *
- * Direct callers of this function should call vfs_check_frozen() so that page
- * fault does not busyloop until the fs is thawed.
+ * Direct callers of this function should protect against filesystem freezing
+ * using sb_start_write() - sb_end_write() functions.
  */
 int __block_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf,
 			 get_block_t get_block)
@@ -2370,18 +2396,7 @@ int __block_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf,
 
 	if (unlikely(ret < 0))
 		goto out_unlock;
-	/*
-	 * Freezing in progress? We check after the page is marked dirty and
-	 * with page lock held so if the test here fails, we are sure freezing
-	 * code will wait during syncing until the page fault is done - at that
-	 * point page will be dirty and unlocked so freezing code will write it
-	 * and writeprotect it again.
-	 */
 	set_page_dirty(page);
-	if (inode->i_sb->s_frozen != SB_UNFROZEN) {
-		ret = -EAGAIN;
-		goto out_unlock;
-	}
 	wait_on_page_writeback(page);
 	return 0;
 out_unlock:
@@ -2396,12 +2411,9 @@ int block_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf,
 	int ret;
 	struct super_block *sb = vma->vm_file->f_path.dentry->d_inode->i_sb;
 
-	/*
-	 * This check is racy but catches the common case. The check in
-	 * __block_page_mkwrite() is reliable.
-	 */
-	vfs_check_frozen(sb, SB_FREEZE_WRITE);
+	sb_start_pagefault(sb);
 	ret = __block_page_mkwrite(vma, vmf, get_block);
+	sb_end_pagefault(sb);
 	return block_page_mkwrite_return(ret);
 }
 EXPORT_SYMBOL(block_page_mkwrite);

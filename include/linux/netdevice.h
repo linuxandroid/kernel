@@ -142,7 +142,7 @@ static inline bool dev_xmit_complete(int rc)
  */
 
 #if defined(CONFIG_WLAN) || defined(CONFIG_AX25) || defined(CONFIG_AX25_MODULE)
-# if defined(CONFIG_MAC80211_MESH)
+# if defined(CONFIG_SYNO_COMCERTO) || defined(CONFIG_MAC80211_MESH)
 #  define LL_MAX_HEADER 128
 # else
 #  define LL_MAX_HEADER 96
@@ -2603,6 +2603,9 @@ static inline u32 dev_ethtool_get_flags(struct net_device *dev)
 	return dev->ethtool_ops->get_flags(dev);
 }
 
+#ifdef MY_ABC_HERE
+extern int syno_get_dev_vendor_mac(const char *szDev, char *szMac);
+#endif
 /* Logging, debugging and troubleshooting/diagnostic helpers. */
 
 /* netdev_printk helpers, similar to dev_printk */

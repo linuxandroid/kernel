@@ -1668,6 +1668,11 @@ zonelist_scan:
 			!cpuset_zone_allowed_softwall(zone, gfp_mask))
 				continue;
 
+#if defined(CONFIG_SYNO_COMCERTO) && defined(CONFIG_COMCERTO_ZONE_DMA_NCNB)
+		if (!(gfp_mask & __GFP_DMA) && (zone_idx(zone) == ZONE_DMA))
+			continue;
+#endif
+
 		BUILD_BUG_ON(ALLOC_NO_WATERMARKS < NR_WMARK);
 		if (!(alloc_flags & ALLOC_NO_WATERMARKS)) {
 			unsigned long mark;
@@ -2264,7 +2269,9 @@ rebalance:
 	}
 
 nopage:
+#ifndef MY_ABC_HERE
 	warn_alloc_failed(gfp_mask, order, NULL);
+#endif
 	return page;
 got_pg:
 	if (kmemcheck_enabled)
@@ -5226,6 +5233,7 @@ void setup_per_zone_wmarks(void)
 
 		zone->watermark[WMARK_LOW]  = min_wmark_pages(zone) + (tmp >> 2);
 		zone->watermark[WMARK_HIGH] = min_wmark_pages(zone) + (tmp >> 1);
+
 		setup_zone_migrate_reserve(zone);
 		spin_unlock_irqrestore(&zone->lock, flags);
 	}

@@ -73,8 +73,12 @@ enum {
 
 	ATA_EH_CMD_DFL_TIMEOUT		=  5000,
 
+#ifdef MY_ABC_HERE
+	ATA_EH_RESET_COOL_DOWN		=  2000,
+#else
 	/* always put at least this amount of time between resets */
 	ATA_EH_RESET_COOL_DOWN		=  5000,
+#endif
 
 	/* Waiting in ->prereset can never be reliable.  It's
 	 * sometimes nice to wait there but it can't be depended upon;
@@ -90,6 +94,11 @@ enum {
 	ATA_EH_PROBE_TRIAL_INTERVAL	= 60000,	/* 1 min */
 	ATA_EH_PROBE_TRIALS		= 2,
 };
+
+#ifdef MY_ABC_HERE
+extern unsigned int guiWakeupDisksNum;
+#endif
+
 
 /* The following table determines how we sequence resets.  Each entry
  * represents timeout for that try.  The first try can be soft or
@@ -707,6 +716,21 @@ void ata_scsi_cmd_error_handler(struct Scsi_Host *host, struct ata_port *ap,
 }
 EXPORT_SYMBOL(ata_scsi_cmd_error_handler);
 
+#ifdef MY_DEF_HERE
+int SYNO_is_ich_port(struct ata_port *ap)
+{
+	struct pci_dev *pdev = NULL;
+	int iRet = 0;
+
+	pdev = to_pci_dev(ap->host->dev);
+	if (pdev && (pdev->vendor == 0x8086 && pdev->device == 0x8c02)) {
+		iRet = 1;
+	}
+
+	return iRet;
+}
+#endif
+
 /**
  * ata_scsi_port_error_handler - recover the port after the commands
  * @host:	SCSI host containing the port
@@ -718,6 +742,15 @@ EXPORT_SYMBOL(ata_scsi_cmd_error_handler);
 void ata_scsi_port_error_handler(struct Scsi_Host *host, struct ata_port *ap)
 {
 	unsigned long flags;
+#ifdef SYNO_SATA_PM_DEVICE_GPIO
+	spin_lock_irqsave(ap->lock, flags);
+	while(ap->pflags & ATA_PFLAG_PMP_PMCTL) {
+		spin_unlock_irqrestore(ap->lock, flags);
+		schedule_timeout_uninterruptible(HZ);
+		spin_lock_irqsave(ap->lock, flags);
+	}
+	spin_unlock_irqrestore(ap->lock, flags);
+#endif
 
 	/* invoke error handler */
 	if (ap->ops->error_handler) {
@@ -814,8 +847,45 @@ void ata_scsi_port_error_handler(struct Scsi_Host *host, struct ata_port *ap)
 
 	if (ap->pflags & ATA_PFLAG_LOADING)
 		ap->pflags &= ~ATA_PFLAG_LOADING;
+#ifdef MY_DEF_HERE
+	else if (ap->pflags & ATA_PFLAG_SCSI_HOTPLUG) {
+		if (!(ap->pflags & ATA_PFLAG_SYNC_SCSI_DEVICE)) {
+#ifdef MY_ABC_HERE
+			INIT_COMPLETION(ap->synoHotplugWait);
+#endif
+			schedule_delayed_work(&ap->hotplug_task, 0);
+#ifdef MY_ABC_HERE
+			wait_for_completion(&(ap->synoHotplugWait));
+#endif
+		} else {
+			ap->pflags &= ~(ATA_PFLAG_SYNC_SCSI_DEVICE);
+		}
+		if (ap->pflags & ATA_PFLAG_FROZEN) {
+			ata_port_printk(ap, KERN_ERR, "thaw port to prevent it can't detect new disks\n");
+			ata_eh_thaw_port(ap);
+		}
+	}
+#else
 	else if (ap->pflags & ATA_PFLAG_SCSI_HOTPLUG)
 		schedule_delayed_work(&ap->hotplug_task, 0);
+#endif
+#ifdef MY_ABC_HERE
+	else if (ap->pflags & ATA_PFLAG_PMP_DISCONNECT ||
+			 ap->pflags & ATA_PFLAG_PMP_CONNECT) {
+		/* Clear unused PMP event when no ATA_PFLAG_SCSI_HOTPLUG */
+#if defined(MY_ABC_HERE)
+		schedule_delayed_work(&ap->hotplug_task, 0);
+#else
+		ap->pflags &= ~ATA_PFLAG_PMP_DISCONNECT;
+		ap->pflags &= ~ATA_PFLAG_PMP_CONNECT;
+#endif //MY_ABC_HERE
+	}
+#endif
+#ifdef MY_ABC_HERE
+	if (ap->pflags & ATA_PFLAG_SYNO_BOOT_PROBE) {
+		ap->pflags &= ~ATA_PFLAG_SYNO_BOOT_PROBE;
+	}
+#endif
 
 	if (ap->pflags & ATA_PFLAG_RECOVERED)
 		ata_port_info(ap, "EH complete\n");
@@ -870,9 +940,21 @@ static int ata_eh_nr_in_flight(struct ata_port *ap)
 	int nr = 0;
 
 	/* count only non-internal commands */
+#if defined(MY_ABC_HERE) && defined(SYNO_SATA_PM_DEVICE_GPIO)
+	for (tag = 0; tag < ATA_MAX_QUEUE - 1; tag++) {
+		struct ata_queued_cmd *qc = ata_qc_from_tag(ap, tag);
+		struct ata_taskfile *tf = &qc->tf;
+
+		if (ata_qc_from_tag(ap, tag) && !((IS_SYNO_PMP_CMD(tf) && NULL == qc->scsicmd) || IS_SYNO_SPINUP_CMD(qc)))
+#else
 	for (tag = 0; tag < ATA_MAX_QUEUE - 1; tag++)
 		if (ata_qc_from_tag(ap, tag))
+#endif
 			nr++;
+
+#if defined(MY_ABC_HERE) && defined(SYNO_SATA_PM_DEVICE_GPIO)
+	}
+#endif
 
 	return nr;
 }
@@ -894,6 +976,9 @@ void ata_eh_fastdrain_timerfn(unsigned long arg)
 	if (cnt == ap->fastdrain_cnt) {
 		unsigned int tag;
 
+#if defined(MY_ABC_HERE)
+		ata_port_printk(ap, KERN_ERR, "All qcs time out, freeze the port\n");
+#endif
 		/* No progress during the last interval, tag all
 		 * in-flight qcs as timed out and freeze the port.
 		 */
@@ -1737,6 +1822,96 @@ void ata_eh_analyze_ncq_error(struct ata_link *link)
 	ehc->i.err_mask &= ~AC_ERR_DEV;
 }
 
+#ifdef MY_ABC_HERE
+extern unsigned char
+blSectorNeedAutoRemap(struct scsi_cmnd *scsi_cmd, sector_t lba);
+static unsigned int
+syno_ata_writes_sector(struct ata_queued_cmd *qc)
+{
+	struct ata_taskfile tf;
+	u8 buf[ATA_SECT_SIZE];
+	u8 blLBA48 = 0;
+	sector_t lba = 0;
+
+	/* if the lba can represent as lba28. we use 28.
+	 * Otherwise we use lba48.
+	 */
+	blLBA48 = (qc->tf.flags & ATA_TFLAG_LBA48) ? 1 : 0;
+
+	lba =   (qc->result_tf.lbal & 0xff) |
+			((sector_t)qc->result_tf.lbam << 8) |
+			((sector_t)qc->result_tf.lbah << 16);
+	if (blLBA48) {
+		lba |=  ((sector_t)qc->result_tf.hob_lbal << 24) |
+				((sector_t)qc->result_tf.hob_lbam << 32) |
+				((sector_t)qc->result_tf.hob_lbah << 40);
+	} else {
+		lba |= (((sector_t)qc->result_tf.device & 0x0f) << 24);
+	}
+
+	ata_dev_printk(qc->dev, KERN_ERR, "%s unc at %llu\n",
+				   (qc->tf.flags & ATA_TFLAG_WRITE) ? "write" : "read",
+				   (unsigned long long)lba);
+
+	if (!(qc->tf.flags & ATA_TFLAG_WRITE) &&
+		!blSectorNeedAutoRemap(qc->scsicmd, lba)) {
+		return 0;
+	}
+
+#ifdef MY_ABC_HERE
+	// only report auto-remap in read
+	if (!(qc->tf.flags & ATA_TFLAG_WRITE)) {
+		if (qc->scsicmd) {
+			if (qc->scsicmd->request) {
+				qc->scsicmd->request->cmd_flags |= REQ_AUTO_REMAP;
+				printk("%s:%s(%d) set request cmd_flags REQ_AUTO_REMAP on\n",
+					__FILE__, __FUNCTION__, __LINE__);
+			}else{
+				printk("%s:%s(%d) cannot trace request from scsi_cmd\n",
+					__FILE__, __FUNCTION__, __LINE__);
+			}
+		}else{
+			printk("%s:%s(%d) cannot trace scsicmd from ata_queued_cmd\n",
+				__FILE__, __FUNCTION__, __LINE__);
+		}
+	}
+#endif
+
+	tf = qc->result_tf;
+	tf.protocol = ATA_PROT_PIO;
+	tf.flags = (ATA_TFLAG_ISADDR | ATA_TFLAG_DEVICE | ATA_TFLAG_WRITE);
+	tf.flags |= ((blLBA48) ? ATA_TFLAG_LBA48 : 0);
+	tf.command = ((blLBA48) ? ATA_CMD_PIO_WRITE_EXT : ATA_CMD_PIO_WRITE);
+	tf.hob_feature = 0;
+	tf.hob_nsect = 0; /* We only need one sector */
+	tf.hob_lbah = ((blLBA48) ? tf.hob_lbah : 0);
+	tf.hob_lbam = ((blLBA48) ? tf.hob_lbam : 0);
+	tf.hob_lbal = ((blLBA48) ? tf.hob_lbal : 0);
+	tf.feature = 0;
+	tf.nsect = 1;
+	tf.ctl = qc->dev->link->ap->ctl;
+	tf.device &= ((blLBA48) ? 0 : 0x0f); /* don't need 4bit in device if command is LBA48 */
+	tf.device |= ATA_LBA | ATA_DEVICE_OBS; /* By ATA8-ACS */
+	tf.device = (qc->dev->devno ?
+					tf.device | ATA_DEV1 : tf.device & ~ATA_DEV1); /* enforce correct master/slave bit(for IDE) */
+
+	ata_dev_printk(qc->dev, KERN_ERR,
+				   "insert remap command %02x/%02x:%02x:%02x:%02x:%02x/%02x:%02x:%02x:%02x:%02x/%02x ctl %02x flag %lu proto %02x\n",
+				   tf.command, tf.feature, tf.nsect,
+				   tf.lbal, tf.lbam, tf.lbah,
+				   tf.hob_feature, tf.hob_nsect,
+				   tf.hob_lbal, tf.hob_lbam, tf.hob_lbah,
+				   tf.device, tf.ctl, tf.flags, tf.protocol);
+
+	memset(buf, 0, sizeof(buf));
+	ata_dev_printk(qc->dev, KERN_WARNING,
+			       "Insert write command result %d\n",
+				   ata_exec_internal(qc->dev, &tf, NULL, DMA_TO_DEVICE,
+									 buf, ATA_SECT_SIZE, 0));
+	return 0;
+}
+#endif
+
 /**
  *	ata_eh_analyze_tf - analyze taskfile of a failed qc
  *	@qc: qc to analyze
@@ -1776,6 +1951,12 @@ static unsigned int ata_eh_analyze_tf(struct ata_queued_cmd *qc,
 			qc->err_mask |= AC_ERR_MEDIA;
 		if (err & ATA_IDNF)
 			qc->err_mask |= AC_ERR_INVALID;
+#ifdef MY_ABC_HERE
+		if (!(qc->ap->pflags & ATA_PFLAG_FROZEN) &&
+			err & ATA_UNC) {
+			syno_ata_writes_sector(qc);
+		}
+#endif
 		break;
 
 	case ATA_DEV_ATAPI:
@@ -2163,6 +2344,13 @@ static void ata_eh_link_autopsy(struct ata_link *link)
 			eflags |= ATA_EFLAG_DUBIOUS_XFER;
 		ehc->i.action |= ata_eh_speed_down(dev, eflags, all_err_mask);
 	}
+#ifdef MY_ABC_HERE
+	if (ap->nr_pmp_links &&
+		ehc->i.serror & SERR_PHYRDY_CHG &&
+		ehc->i.serror & SERR_COMM_WAKE) {
+		ap->link.eh_context.i.action |= ATA_EH_HARDRESET;
+	}
+#endif
 
 	DPRINTK("EXIT\n");
 }
@@ -2413,6 +2601,10 @@ static void ata_eh_link_report(struct ata_link *link)
 		  ehc->i.serror & SERR_DEV_XCHG ? "DevExch " : "");
 #endif
 
+#ifdef SYNO_SATA_ERROR_REPORT
+	link->uiSError = ehc->i.serror;
+#endif
+
 	for (tag = 0; tag < ATA_MAX_QUEUE; tag++) {
 		struct ata_queued_cmd *qc = __ata_qc_from_tag(ap, tag);
 		struct ata_taskfile *cmd = &qc->tf, *res = &qc->result_tf;
@@ -2500,7 +2692,16 @@ static void ata_eh_link_report(struct ata_link *link)
 			  res->feature & ATA_IDNF ? "IDNF " : "",
 			  res->feature & ATA_ABORTED ? "ABRT " : "");
 #endif
+#ifdef SYNO_SATA_ERROR_REPORT
+		if (cmd->command != ATA_CMD_PACKET &&
+		    (res->feature & (ATA_ICRC | ATA_UNC | ATA_IDNF | ATA_ABORTED))) {
+			link->uiError = res->feature & (ATA_ICRC | ATA_UNC | ATA_IDNF | ATA_ABORTED);
+		}
+#endif
 	}
+#ifdef SYNO_SATA_ERROR_REPORT
+	schedule_work(&(link->SendSataErrEventTask));
+#endif
 }
 
 /**
@@ -2562,6 +2763,9 @@ int ata_eh_reset(struct ata_link *link, int classify,
 	ata_reset_fn_t reset;
 	unsigned long flags;
 	u32 sstatus;
+#ifdef MY_ABC_HERE
+	u32 scontrol;
+#endif
 	int nr_unknown, rc;
 
 	/*
@@ -2876,6 +3080,16 @@ int ata_eh_reset(struct ata_link *link, int classify,
 	ap->pflags &= ~ATA_PFLAG_RESETTING;
 	spin_unlock_irqrestore(ap->lock, flags);
 
+#ifdef MY_ABC_HERE
+	if(link->uiStsFlags & SYNO_STATUS_IS_SIL3132) {
+		//clean up speed negotiation register (scontrol[7:4])
+		sata_scr_read(link, SCR_CONTROL, &scontrol);
+		scontrol = (scontrol & ~0x0f0);
+		sata_scr_write(link, SCR_CONTROL, scontrol);
+		link->uiStsFlags &= ~SYNO_STATUS_IS_SIL3132;
+	}
+#endif
+
 	return rc;
 
  fail:
@@ -3085,6 +3299,10 @@ static int ata_eh_revalidate_and_attach(struct ata_link *link,
 				 * thaw and ignore the device.
 				 */
 				ata_eh_thaw_port(ap);
+#ifdef MY_ABC_HERE
+				ata_link_err(link, "Issued IDENTIFY to non-existent device ?!\n");
+				goto err;
+#endif
 				break;
 			default:
 				goto err;
@@ -3271,7 +3489,11 @@ static int ata_eh_maybe_retry_flush(struct ata_device *dev)
 		return 0;
 
 	/* if the device failed it, it should be reported to upper layers */
+#ifdef MY_ABC_HERE 
+	if ((qc->err_mask & AC_ERR_DEV) && ATA_DEV_UNKNOWN == dev->class)
+#else
 	if (qc->err_mask & AC_ERR_DEV)
+#endif
 		return 0;
 
 	/* flush failed for some other reason, give it another shot */
@@ -3552,8 +3774,14 @@ static int ata_eh_schedule_probe(struct ata_device *dev)
 	ata_ering_record(&dev->ering, 0, AC_ERR_OTHER);
 	ata_ering_map(&dev->ering, ata_count_probe_trials_cb, &trials);
 
+#ifdef MY_DEF_HERE
+	if (!link->ap->uiSflags & ATA_SYNO_FLAG_FORCE_RETRY) {
+#endif
 	if (trials > ATA_EH_PROBE_TRIALS)
 		sata_down_spd_limit(link, 1);
+#ifdef MY_DEF_HERE
+	}
+#endif
 
 	return 1;
 }
@@ -3561,12 +3789,41 @@ static int ata_eh_schedule_probe(struct ata_device *dev)
 static int ata_eh_handle_dev_fail(struct ata_device *dev, int err)
 {
 	struct ata_eh_context *ehc = &dev->link->eh_context;
+#ifdef MY_DEF_HERE
+	struct pci_dev *pdev = NULL;
+#endif
 
 	/* -EAGAIN from EH routine indicates retry without prejudice.
 	 * The requester is responsible for ensuring forward progress.
 	 */
 	if (err != -EAGAIN)
+#ifdef MY_DEF_HERE
+	{
+		/* To solve some disk drop speed after last chance reset in ICH sata port,
+		 * We clean the speed limit and do one more reset to apply this modification
+		 */
+		if (1 == ehc->tries[dev->devno] && -EIO == err) {
+			if (dev->link->ap && dev->link->ap->host) {
+				pdev = to_pci_dev(dev->link->ap->host->dev);
+			}
+			if (pdev && (pdev->vendor == 0x8086 && pdev->device == 0x8c02)) {
+				u32 scontrol = 0;
+				dev->link->sata_spd_limit = 0;
+				sata_scr_read(dev->link, SCR_CONTROL, &scontrol);
+				scontrol = (scontrol & ~0x0f0);
+				sata_scr_write(dev->link, SCR_CONTROL, scontrol);
+				ehc->i.action |= ATA_EH_RESET;
+				ehc->tries[dev->devno]--;
+				return 0;
+			}
+		}
+		if (ehc->tries[dev->devno]) {
+#endif
 		ehc->tries[dev->devno]--;
+#ifdef MY_DEF_HERE
+		}
+	}
+#endif
 
 	switch (err) {
 	case -ENODEV:
@@ -3593,6 +3850,12 @@ static int ata_eh_handle_dev_fail(struct ata_device *dev, int err)
 		/* detach if offline */
 		if (ata_phys_link_offline(ata_dev_phys_link(dev)))
 			ata_eh_detach_dev(dev);
+#ifdef MY_ABC_HERE
+		else if(-EIO == err) {
+			ata_dev_printk(dev, KERN_WARNING,"handle -EIO dev fail, detach this dev\n");
+			ata_eh_detach_dev(dev);
+		}
+#endif
 
 		/* schedule probe if necessary */
 		if (ata_eh_schedule_probe(dev)) {
@@ -3695,6 +3958,18 @@ int ata_eh_recover(struct ata_port *ap, ata_prereset_fn_t prereset,
 			ehc->classes[dev->devno] = ATA_DEV_UNKNOWN;
 	}
 
+#ifdef MY_ABC_HERE
+	if (ap->nr_pmp_links &&
+		ap->pflags & ATA_PFLAG_SYNO_BOOT_PROBE) {
+		ata_port_printk(ap, KERN_INFO, "Apply Synology fast PMP boot\n");
+		ata_for_each_link(link, ap, EDGE) {
+			int class = 0;
+
+			if (ap->ops->pmp_hardreset)
+				ap->ops->pmp_hardreset(link, &class, 0);
+		}
+	}
+#endif
 	/* reset */
 	ata_for_each_link(link, ap, EDGE) {
 		struct ata_eh_context *ehc = &link->eh_context;
@@ -3777,7 +4052,16 @@ int ata_eh_recover(struct ata_port *ap, ata_prereset_fn_t prereset,
 
 		/* if PMP got attached, return, pmp EH will take care of it */
 		if (link->device->class == ATA_DEV_PMP) {
+#ifdef MY_ABC_HERE
+			if (ehc->i.action & ATA_EH_SYNO_PWON) {
+				ehc->i.action = 0;
+				ehc->i.action |= ATA_EH_HARDRESET;
+			}else {
+				ehc->i.action = 0;
+			}
+#else
 			ehc->i.action = 0;
+#endif
 			return 0;
 		}
 
@@ -3818,6 +4102,23 @@ int ata_eh_recover(struct ata_port *ap, ata_prereset_fn_t prereset,
 			if (rc)
 				goto rest_fail;
 		}
+
+#ifdef MY_ABC_HERE
+		if (ehc->i.action & ATA_EH_WCACHE_DISABLE) {
+			ata_for_each_dev(dev, link, ALL) {
+				unsigned int err_mask = 0;
+				if (dev->class != ATA_DEV_ATA || !(dev->flags & ATA_DFLAG_NO_WCACHE))
+					continue;
+
+				ata_dev_printk(dev, KERN_ERR, "Disable disk write cache in EH");
+				err_mask = ata_dev_set_feature(dev, SETFEATURES_WC_OFF, 0);
+				if (err_mask)
+					ata_dev_printk(dev, KERN_ERR,
+						"failed to dsiable write cache "
+						"(err_mask=0x%x)\n", err_mask);
+			}
+		}
+#endif
 
 		/* this link is okay now */
 		ehc->i.flags = 0;
@@ -3866,6 +4167,16 @@ void ata_eh_finish(struct ata_port *ap)
 	/* retry or finish qcs */
 	for (tag = 0; tag < ATA_MAX_QUEUE; tag++) {
 		struct ata_queued_cmd *qc = __ata_qc_from_tag(ap, tag);
+
+#ifdef MY_ABC_HERE
+		if (0 < guiWakeupDisksNum && 1 == ap->nr_active_links &&
+			(qc->flags & ATA_QCFLAG_ACTIVE) && IS_SYNO_SPINUP_CMD(qc)) {
+			DBGMESG("ata%u eh finish, set failed to spinup cmd 0x%x\n", ap->print_id, qc->tf.command);
+			qc->flags |= ATA_QCFLAG_FAILED;
+			__ata_qc_complete(qc);
+			continue;
+		}
+#endif
 
 		if (!(qc->flags & ATA_QCFLAG_FAILED))
 			continue;

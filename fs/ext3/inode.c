@@ -869,7 +869,6 @@ int ext3_get_blocks_handle(handle_t *handle, struct inode *inode,
 	int count = 0;
 	ext3_fsblk_t first_block = 0;
 
-
 	trace_ext3_get_blocks_enter(inode, iblock, maxblocks, create);
 	J_ASSERT(handle != NULL || create == 0);
 	depth = ext3_block_to_path(inode,iblock,offsets,&blocks_to_boundary);
@@ -1255,9 +1254,21 @@ static int ext3_write_begin(struct file *file, struct address_space *mapping,
 	struct page *page;
 	pgoff_t index;
 	unsigned from, to;
+#ifdef MY_ABC_HERE
+	// Add for mark_inode_dirty.
+	int needed_blocks;
+
+	if (flags & AOP_FLAG_RECVFILE) {
+		needed_blocks = ext3_writepage_trans_blocks(inode) + MAX_PAGES_PER_RECVFILE;
+	} else {
+		needed_blocks = ext3_writepage_trans_blocks(inode) + 1;
+	}
+#endif
+#ifndef MY_ABC_HERE
 	/* Reserve one block more for addition to orphan list in case
 	 * we allocate blocks but write fails for some reason */
 	int needed_blocks = ext3_writepage_trans_blocks(inode) + 1;
+#endif
 
 	trace_ext3_write_begin(inode, pos, len, flags);
 
@@ -1278,6 +1289,7 @@ retry:
 		ret = PTR_ERR(handle);
 		goto out;
 	}
+
 	ret = __block_write_begin(page, pos, len, ext3_get_block);
 	if (ret)
 		goto write_begin_failed;
@@ -1297,8 +1309,10 @@ write_begin_failed:
 		 * finishes. Do this only if ext3_can_truncate() agrees so
 		 * that orphan processing code is happy.
 		 */
+#ifndef MY_ABC_HERE
 		if (pos + len > inode->i_size && ext3_can_truncate(inode))
 			ext3_orphan_add(handle, inode);
+#endif
 		ext3_journal_stop(handle);
 		unlock_page(page);
 		page_cache_release(page);
@@ -1307,6 +1321,15 @@ write_begin_failed:
 	}
 	if (ret == -ENOSPC && ext3_should_retry_alloc(inode->i_sb, &retries))
 		goto retry;
+#ifdef MY_ABC_HERE
+	if (ret >= 0 && (flags & AOP_FLAG_RECVFILE)) {
+		if (pos + len > inode->i_size) {
+			// Don't need i_size_write because we hold i_mutex.
+			inode->i_size = pos + len;
+			ext3_mark_inode_dirty(handle, inode);
+		}
+	}
+#endif
 out:
 	return ret;
 }
@@ -2891,6 +2914,7 @@ struct inode *ext3_iget(struct super_block *sb, unsigned long ino)
 	struct ext3_inode_info *ei;
 	struct buffer_head *bh;
 	struct inode *inode;
+
 	journal_t *journal = EXT3_SB(sb)->s_journal;
 	transaction_t *transaction;
 	long ret;
@@ -2923,6 +2947,13 @@ struct inode *ext3_iget(struct super_block *sb, unsigned long ino)
 	inode->i_ctime.tv_sec = (signed)le32_to_cpu(raw_inode->i_ctime);
 	inode->i_mtime.tv_sec = (signed)le32_to_cpu(raw_inode->i_mtime);
 	inode->i_atime.tv_nsec = inode->i_ctime.tv_nsec = inode->i_mtime.tv_nsec = 0;
+#ifdef MY_ABC_HERE
+	inode->i_CreateTime.tv_sec = (signed)le32_to_cpu(raw_inode->ext3_CreateTime);
+	inode->i_CreateTime.tv_nsec = 0;
+#endif
+#ifdef MY_ABC_HERE
+	inode->i_mode2 = le32_to_cpu(raw_inode->ext3_mode2);
+#endif
 
 	ei->i_state_flags = 0;
 	ei->i_dir_start_lookup = 0;
@@ -3126,6 +3157,12 @@ again:
 	raw_inode->i_faddr = cpu_to_le32(ei->i_faddr);
 	raw_inode->i_frag = ei->i_frag_no;
 	raw_inode->i_fsize = ei->i_frag_size;
+#endif
+#ifdef MY_ABC_HERE
+	raw_inode->ext3_CreateTime = cpu_to_le32(inode->i_CreateTime.tv_sec);
+#endif
+#ifdef MY_ABC_HERE
+	raw_inode->ext3_mode2 = cpu_to_le32(inode->i_mode2);
 #endif
 	raw_inode->i_file_acl = cpu_to_le32(ei->i_file_acl);
 	if (!S_ISREG(inode->i_mode)) {
@@ -3363,6 +3400,74 @@ err_out:
 	return error;
 }
 
+#ifdef MY_ABC_HERE
+int syno_ext3_getattr(struct dentry *d, struct kstat *stat, int flags)
+{
+	struct inode *inode = d->d_inode;
+	int err = 0;
+
+#ifdef MY_ABC_HERE
+	if (flags & SYNOST_CREATIME) {
+		stat->SynoCreateTime = inode->i_CreateTime;
+	}
+#endif
+#ifdef MY_ABC_HERE
+	if (flags & SYNOST_ARBIT) {
+		stat->SynoMode = inode->i_mode2;
+	}
+#endif
+#ifdef MY_ABC_HERE
+	if (flags & SYNOST_BKPVER) {
+		err = syno_ext3_get_archive_ver(d, &stat->syno_archive_version);
+	}
+#endif
+	return err;
+}
+#endif
+
+#ifdef MY_ABC_HERE
+int syno_ext3_set_archive_ver(struct dentry *dentry, u32 version)
+{
+	struct inode *inode = dentry->d_inode;
+	struct syno_xattr_archive_version value;
+	int err;
+
+	value.v_magic = cpu_to_le16(0x2552);
+	value.v_struct_version = cpu_to_le16(1);
+	value.v_archive_version = cpu_to_le32(version);
+	err = ext3_xattr_set(inode, EXT3_XATTR_INDEX_SYNO, XATTR_SYNO_ARCHIVE_VERSION, &value, sizeof(value), 0);
+	if (!err) {
+		inode->i_archive_version = version;
+		inode->i_flags |= S_ARCHIVE_VERSION_CACHED;
+	}
+	return err;
+}
+
+int syno_ext3_get_archive_ver(struct dentry *dentry, u32 *version)
+{
+	struct inode *inode = dentry->d_inode;
+	struct syno_xattr_archive_version value;
+	int err;
+
+	if (IS_ARCHIVE_VERSION_CACHED(inode)) {
+		*version = inode->i_archive_version;
+		return 0;
+	}
+
+	err = ext3_xattr_get(inode, EXT3_XATTR_INDEX_SYNO, XATTR_SYNO_ARCHIVE_VERSION, &value, sizeof(value));
+	if (0 < err) {
+		inode->i_archive_version = le32_to_cpu(value.v_archive_version);
+	} else if (-ENODATA == err) {
+		inode->i_archive_version = 0;
+	} else {
+		*version = 0;
+		return err;
+	}
+	*version = inode->i_archive_version;
+	inode->i_flags |= S_ARCHIVE_VERSION_CACHED;
+	return 0;
+}
+#endif
 
 /*
  * How many blocks doth make a writepage()?

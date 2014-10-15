@@ -65,7 +65,11 @@ int br_handle_frame_finish(struct sk_buff *skb)
 	    br_multicast_rcv(br, p, skb))
 		goto drop;
 
+#if defined(CONFIG_SYNO_COMCERTO)
+	if ((p->state == BR_STATE_LEARNING) && skb->protocol != htons(ETH_P_PAE))
+#else
 	if (p->state == BR_STATE_LEARNING)
+#endif
 		goto drop;
 
 	BR_INPUT_SKB_CB(skb)->brdev = br->dev;
@@ -78,6 +82,13 @@ int br_handle_frame_finish(struct sk_buff *skb)
 
 	dst = NULL;
 
+#if defined(CONFIG_SYNO_COMCERTO)
+	if (skb->protocol == htons(ETH_P_PAE)) {
+		skb2 = skb;
+		/* Do not forward 802.1x/EAP frames */
+		skb = NULL;
+	} else
+#endif
 	if (is_broadcast_ether_addr(dest))
 		skb2 = skb;
 	else if (is_multicast_ether_addr(dest)) {
@@ -94,7 +105,12 @@ int br_handle_frame_finish(struct sk_buff *skb)
 			skb2 = skb;
 
 		br->dev->stats.multicast++;
+#if defined(CONFIG_SYNO_COMCERTO)
+	} else if ((p->flags & BR_ISOLATE_MODE) ||
+		   ((dst = __br_fdb_get(br, dest)) && dst->is_local)) {
+#else
 	} else if ((dst = __br_fdb_get(br, dest)) && dst->is_local) {
+#endif
 		skb2 = skb;
 		/* Do not forward the packet since it's local. */
 		skb = NULL;

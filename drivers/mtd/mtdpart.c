@@ -29,9 +29,34 @@
 #include <linux/kmod.h>
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/partitions.h>
+#if defined(CONFIG_SYNO_COMCERTO)
+#include <linux/root_dev.h>
+#include <linux/magic.h>
+#endif
 #include <linux/err.h>
+#ifdef MY_ABC_HERE
+#include <linux/rtnetlink.h>
+#include <linux/netdevice.h>
+#include <linux/if_arp.h>
+#endif
+
+#ifdef MY_ABC_HERE
+extern unsigned char grgbLanMac[4][16];
+#endif
+
+#ifdef MY_ABC_HERE
+extern char gszSerialNum[];
+extern char gszCustomSerialNum[];
+#define SYNO_SN_TAG "SN="
+#define SYNO_CHKSUM_TAG "CHK="
+#define SYNO_SN_12_SIG SYNO_SN_TAG  // signature for 12 serial number
+#endif
 
 #include "mtdcore.h"
+
+#if defined(CONFIG_SYNO_COMCERTO)
+#define MTD_ERASE_PARTIAL	0x8000 /* partition only covers parts of an erase block */
+#endif
 
 /* Our partition linked list */
 static LIST_HEAD(mtd_partitions);
@@ -50,7 +75,9 @@ struct mtd_part {
  * the pointer to that structure with this macro.
  */
 #define PART(x)  ((struct mtd_part *)(x))
-
+#if defined(CONFIG_SYNO_COMCERTO)
+#define IS_PART(mtd) (mtd->read == part_read)
+#endif
 
 /*
  * MTD methods which simply translate the effective address and pass through
@@ -256,12 +283,62 @@ static int part_erase(struct mtd_info *mtd, struct erase_info *instr)
 		return -EROFS;
 	if (instr->addr >= mtd->size)
 		return -EINVAL;
+
+#if defined(CONFIG_SYNO_COMCERTO)
+	instr->partial_start = false;
+	if (mtd->flags & MTD_ERASE_PARTIAL) {
+		size_t readlen = 0;
+		u64 mtd_ofs;
+
+		instr->erase_buf = kmalloc(part->master->erasesize, GFP_ATOMIC);
+		if (!instr->erase_buf)
+			return -ENOMEM;
+
+		mtd_ofs = part->offset + instr->addr;
+		instr->erase_buf_ofs = do_div(mtd_ofs, part->master->erasesize);
+
+		if (instr->erase_buf_ofs > 0) {
+			instr->addr -= instr->erase_buf_ofs;
+			ret = part->master->read(part->master,
+				instr->addr + part->offset,
+				part->master->erasesize,
+				&readlen, instr->erase_buf);
+
+			instr->partial_start = true;
+		} else {
+			mtd_ofs = part->offset + part->mtd.size;
+			instr->erase_buf_ofs = part->master->erasesize -
+				do_div(mtd_ofs, part->master->erasesize);
+
+			if (instr->erase_buf_ofs > 0) {
+				instr->len += instr->erase_buf_ofs;
+				ret = part->master->read(part->master,
+					part->offset + instr->addr +
+					instr->len - part->master->erasesize,
+					part->master->erasesize, &readlen,
+					instr->erase_buf);
+			} else {
+				ret = 0;
+			}
+		}
+		if (ret < 0) {
+			kfree(instr->erase_buf);
+			return ret;
+		}
+
+	}
+#endif
+
 	instr->addr += part->offset;
 	ret = part->master->erase(part->master, instr);
 	if (ret) {
 		if (instr->fail_addr != MTD_FAIL_ADDR_UNKNOWN)
 			instr->fail_addr -= part->offset;
 		instr->addr -= part->offset;
+#if defined(CONFIG_SYNO_COMCERTO)
+		if (mtd->flags & MTD_ERASE_PARTIAL)
+			kfree(instr->erase_buf);
+#endif
 	}
 	return ret;
 }
@@ -270,7 +347,29 @@ void mtd_erase_callback(struct erase_info *instr)
 {
 	if (instr->mtd->erase == part_erase) {
 		struct mtd_part *part = PART(instr->mtd);
+#if defined(CONFIG_SYNO_COMCERTO)
+		size_t wrlen = 0;
+#endif
 
+#if defined(CONFIG_SYNO_COMCERTO)
+		if (instr->mtd->flags & MTD_ERASE_PARTIAL) {
+			if (instr->partial_start) {
+				part->master->write(part->master,
+					instr->addr, instr->erase_buf_ofs,
+					&wrlen, instr->erase_buf);
+				instr->addr += instr->erase_buf_ofs;
+			} else {
+				instr->len -= instr->erase_buf_ofs;
+				part->master->write(part->master,
+					instr->addr + instr->len,
+					instr->erase_buf_ofs, &wrlen,
+					instr->erase_buf +
+					part->master->erasesize -
+					instr->erase_buf_ofs);
+			}
+			kfree(instr->erase_buf);
+		}
+#endif
 		if (instr->fail_addr != MTD_FAIL_ADDR_UNKNOWN)
 			instr->fail_addr -= part->offset;
 		instr->addr -= part->offset;
@@ -541,18 +640,41 @@ static struct mtd_part *allocate_partition(struct mtd_info *master,
 	if ((slave->mtd.flags & MTD_WRITEABLE) &&
 	    mtd_mod_by_eb(slave->offset, &slave->mtd)) {
 		/* Doesn't start on a boundary of major erase size */
+#if defined(CONFIG_SYNO_COMCERTO)
+		slave->mtd.flags |= MTD_ERASE_PARTIAL;
+		if (((u32) slave->mtd.size) > master->erasesize)
+			slave->mtd.flags &= ~MTD_WRITEABLE;
+		else
+			slave->mtd.erasesize = slave->mtd.size;
+#else
 		/* FIXME: Let it be writable if it is on a boundary of
 		 * _minor_ erase size though */
 		slave->mtd.flags &= ~MTD_WRITEABLE;
 		printk(KERN_WARNING"mtd: partition \"%s\" doesn't start on an erase block boundary -- force read-only\n",
 			part->name);
+#endif
 	}
 	if ((slave->mtd.flags & MTD_WRITEABLE) &&
+#if defined(CONFIG_SYNO_COMCERTO)
+	    mtd_mod_by_eb(slave->offset + slave->mtd.size, &slave->mtd)) {
+		slave->mtd.flags |= MTD_ERASE_PARTIAL;
+
+		if ((u32) slave->mtd.size > master->erasesize)
+			slave->mtd.flags &= ~MTD_WRITEABLE;
+		else
+			slave->mtd.erasesize = slave->mtd.size;
+#else
 	    mtd_mod_by_eb(slave->mtd.size, &slave->mtd)) {
 		slave->mtd.flags &= ~MTD_WRITEABLE;
 		printk(KERN_WARNING"mtd: partition \"%s\" doesn't end on an erase block -- force read-only\n",
 			part->name);
+#endif
 	}
+#if defined(CONFIG_SYNO_COMCERTO)
+	if ((slave->mtd.flags & (MTD_ERASE_PARTIAL|MTD_WRITEABLE)) == MTD_ERASE_PARTIAL)
+		printk(KERN_WARNING"mtd: partition \"%s\" must either start or end on erase block boundary or be smaller than an erase block -- forcing read-only\n",
+				part->name);
+#endif
 
 	slave->mtd.ecclayout = master->ecclayout;
 	if (master->block_isbad) {
@@ -567,6 +689,144 @@ static struct mtd_part *allocate_partition(struct mtd_info *master,
 	}
 
 out_register:
+
+#if defined(MY_ABC_HERE) 
+	if ((memcmp(part->name, "vender", 7)==0) ||
+		(memcmp(part->name, "vendor", 7)==0)) {
+			int gVenderMacNumber = 0;
+
+			u_char rgbszBuf[128];
+			size_t retlen;
+			int i, n, x;
+			unsigned int Sum;
+			u_char ucSum;
+			char rgbLanMac[4][6];
+
+			part_read(&slave->mtd, 0, 128, &retlen, rgbszBuf);
+#ifdef MY_ABC_HERE
+			x = 0;
+			gVenderMacNumber = 0;
+			for (n = 0; n<4; n++) {
+				for (Sum=0,ucSum=0,i=0; i<6; i++) {
+					Sum+=rgbszBuf[i+x];
+					ucSum+=rgbszBuf[i+x];
+					rgbLanMac[n][i] = rgbszBuf[i+x];
+				}
+				x+=6;
+
+				if (Sum==0 || ucSum!=rgbszBuf[x]) {
+					printk("vender Mac%d checksum error ucSum:0x%02x Buf:0x%02x Sum:%d.\n", 
+							n, ucSum, rgbszBuf[x], Sum);
+					grgbLanMac[n][0] = '\0';
+				} else {
+					snprintf(grgbLanMac[n], sizeof(grgbLanMac),
+							"%02x%02x%02x%02x%02x%02x",
+					rgbLanMac[n][0],
+					rgbLanMac[n][1],
+					rgbLanMac[n][2],
+					rgbLanMac[n][3],
+					rgbLanMac[n][4],
+					rgbLanMac[n][5]);
+				}
+
+				x++;
+				gVenderMacNumber++;
+			}
+#endif
+
+#ifdef MY_ABC_HERE
+			char szSerialBuffer[32];
+			char *ptr;
+			char szSerial[32];
+			char szCheckSum[32];
+			unsigned int uichksum = 0;
+			unsigned int uiTemp = 0;
+
+			memset(szSerial, 0, sizeof(szSerial));
+			memset(szCheckSum, 0, sizeof(szCheckSum));
+			memset(gszSerialNum, 0, 32);
+			memcpy(szSerialBuffer, &(rgbszBuf[32]), 32);
+
+			// this is new defined SN
+			if (0 == strncmp(szSerialBuffer, SYNO_SN_12_SIG,strlen(SYNO_SN_12_SIG))) {
+				//paring serial number with format 'SN=1350KKN99999'
+				ptr = strstr(szSerialBuffer, SYNO_SN_TAG);
+				if (NULL == ptr) {
+					printk("no serial tag found, serial buffer='%s'\n", szSerialBuffer);
+					goto SKIP_SERIAL;
+				}
+				ptr += strlen(SYNO_SN_TAG);
+				i = 0;
+				while (0 != *ptr && ',' != *ptr) {
+					szSerial[i++] = *ptr;
+					ptr++;
+				}
+				szSerial[i] = '\0';
+
+				//paring serial number with format 'CHK=125'
+				ptr = strstr(szSerialBuffer, SYNO_CHKSUM_TAG);
+				if (NULL == ptr) {
+					printk("no checksum tag found, serial buffer='%s'\n", szSerialBuffer);
+					goto SKIP_SERIAL;
+				}
+				ptr += strlen(SYNO_CHKSUM_TAG);
+				i = 0;
+				while (0 != *ptr && ',' != *ptr) {
+					szCheckSum[i++] = *ptr;
+					ptr++;
+				}
+				szCheckSum[i] = '\0';
+
+				//calculate checksum
+				for (i = 0 ; i < strlen(szSerial); i++) {
+					uichksum += szSerial[i];
+				}
+
+				//------ check checksum ------
+				if (0 != strict_strtoul(szCheckSum, 10, &uiTemp)) {
+					printk("string conversion error: '%s'\n", szCheckSum);
+					goto SKIP_SERIAL;
+				} else if (uichksum != uiTemp) {
+					printk("serial number checksum error, serial='%s', checksum='%u' not '%u'\n", szSerial, uichksum, uiTemp);
+					goto SKIP_SERIAL;
+				}
+			} else {
+				unsigned char ucChkSum = 0;
+				//calculate checksum
+				for (i = 0 ; i < 10; i++) {
+					ucChkSum += szSerialBuffer[i];
+				}
+				//------ check checksum ------
+				if (ucChkSum != szSerialBuffer[10]) {
+					printk("serial number checksum error, serial='%s', checksum='%d' not '%d'", szSerialBuffer, ucChkSum, szSerialBuffer[10]);
+					goto SKIP_SERIAL;
+				} else {
+					memcpy(szSerial, szSerialBuffer, 10);
+				}
+			}
+			snprintf(gszSerialNum, 32, "%s", szSerial);
+SKIP_SERIAL:
+			printk("serial number='%s'", gszSerialNum);
+
+			//read custom serial number out, it is in the vender partion shift 64 bytes.
+			x = 64;
+			for (Sum=0,ucSum=0,i=0; i<31; i++) {
+				Sum+=rgbszBuf[i+x];
+				ucSum+=rgbszBuf[i+x];
+				gszCustomSerialNum[i] = rgbszBuf[i+x];
+			}
+			x+=31;
+			if (Sum==0 || ucSum!=rgbszBuf[x]) {
+				for (i=0; i<32; i++) {
+					gszCustomSerialNum[i] = 0;
+				}
+			} else {
+				printk("Custom Serial Number: %s\n", gszCustomSerialNum);
+			}
+#endif
+        }
+#endif
+
 	return slave;
 }
 
@@ -650,6 +910,155 @@ int mtd_del_partition(struct mtd_info *master, int partno)
 }
 EXPORT_SYMBOL_GPL(mtd_del_partition);
 
+#if defined(CONFIG_SYNO_COMCERTO) && defined(CONFIG_MTD_ROOTFS_SPLIT)
+#define ROOTFS_SPLIT_NAME "rootfs_data"
+#define ROOTFS_REMOVED_NAME "<removed>"
+
+struct squashfs_super_block {
+	__le32 s_magic;
+	__le32 pad0[9];
+	__le64 bytes_used;
+};
+
+
+static int split_squashfs(struct mtd_info *master, int offset, int *split_offset)
+{
+	struct squashfs_super_block sb;
+	int len, ret;
+
+	ret = master->read(master, offset, sizeof(sb), &len, (void *) &sb);
+	if (ret || (len != sizeof(sb))) {
+		printk(KERN_ALERT "split_squashfs: error occured while reading "
+			"from \"%s\"\n", master->name);
+		return -EINVAL;
+	}
+
+	if (SQUASHFS_MAGIC != le32_to_cpu(sb.s_magic) ) {
+		printk(KERN_ALERT "split_squashfs: no squashfs found in \"%s\"\n",
+			master->name);
+		*split_offset = 0;
+		return 0;
+	}
+
+	if (le64_to_cpu((sb.bytes_used)) <= 0) {
+		printk(KERN_ALERT "split_squashfs: squashfs is empty in \"%s\"\n",
+			master->name);
+		*split_offset = 0;
+		return 0;
+	}
+
+	len = (u32) le64_to_cpu(sb.bytes_used);
+	len += (offset & 0x000fffff);
+	len +=  (master->erasesize - 1);
+	len &= ~(master->erasesize - 1);
+	len -= (offset & 0x000fffff);
+	*split_offset = offset + len;
+
+	return 0;
+}
+
+static int split_rootfs_data(struct mtd_info *master, struct mtd_info *rpart, const struct mtd_partition *part)
+{
+	struct mtd_partition *dpart;
+	struct mtd_part *slave = NULL;
+	struct mtd_part *spart;
+	int ret, split_offset = 0;
+
+	spart = PART(rpart);
+	ret = split_squashfs(master, spart->offset, &split_offset);
+	if (ret)
+		return ret;
+
+	if (split_offset <= 0)
+		return 0;
+
+	dpart = kmalloc(sizeof(*part)+sizeof(ROOTFS_SPLIT_NAME)+1, GFP_KERNEL);
+	if (dpart == NULL) {
+		printk(KERN_INFO "split_squashfs: no memory for partition \"%s\"\n",
+			ROOTFS_SPLIT_NAME);
+		return -ENOMEM;
+	}
+
+	memcpy(dpart, part, sizeof(*part));
+	dpart->name = (unsigned char *)&dpart[1];
+	strcpy(dpart->name, ROOTFS_SPLIT_NAME);
+
+	dpart->size = rpart->size - (split_offset - spart->offset);
+	dpart->offset = split_offset;
+
+	if (dpart == NULL)
+		return 1;
+
+	printk(KERN_INFO "mtd: partition \"%s\" created automatically, ofs=%llX, len=%llX \n",
+		ROOTFS_SPLIT_NAME, dpart->offset, dpart->size);
+
+	slave = allocate_partition(master, dpart, 0, split_offset);
+	if (IS_ERR(slave))
+		return PTR_ERR(slave);
+	mutex_lock(&mtd_partitions_mutex);
+	list_add(&slave->list, &mtd_partitions);
+	mutex_unlock(&mtd_partitions_mutex);
+
+	add_mtd_device(&slave->mtd);
+
+	rpart->split = &slave->mtd;
+
+	return 0;
+}
+
+static int refresh_rootfs_split(struct mtd_info *mtd)
+{
+	struct mtd_partition tpart;
+	struct mtd_part *part;
+	char *name;
+	//int index = 0;
+	int offset, size;
+	int ret;
+
+	part = PART(mtd);
+
+	/* check for the new squashfs offset first */
+	ret = split_squashfs(part->master, part->offset, &offset);
+	if (ret)
+		return ret;
+
+	if ((offset > 0) && !mtd->split) {
+		printk(KERN_INFO "%s: creating new split partition for \"%s\"\n", __func__, mtd->name);
+		/* if we don't have a rootfs split partition, create a new one */
+		tpart.name = (char *) mtd->name;
+		tpart.size = mtd->size;
+		tpart.offset = part->offset;
+
+		return split_rootfs_data(part->master, &part->mtd, &tpart);
+	} else if ((offset > 0) && mtd->split) {
+		/* update the offsets of the existing partition */
+		size = mtd->size + part->offset - offset;
+
+		part = PART(mtd->split);
+		part->offset = offset;
+		part->mtd.size = size;
+		printk(KERN_INFO "%s: %s partition \"" ROOTFS_SPLIT_NAME "\", offset: 0x%06x (0x%06x)\n",
+			__func__, (!strcmp(part->mtd.name, ROOTFS_SPLIT_NAME) ? "updating" : "creating"),
+			(u32) part->offset, (u32) part->mtd.size);
+		name = kmalloc(sizeof(ROOTFS_SPLIT_NAME) + 1, GFP_KERNEL);
+		strcpy(name, ROOTFS_SPLIT_NAME);
+		part->mtd.name = name;
+	} else if ((offset <= 0) && mtd->split) {
+		printk(KERN_INFO "%s: removing partition \"%s\"\n", __func__, mtd->split->name);
+
+		/* mark existing partition as removed */
+		part = PART(mtd->split);
+		name = kmalloc(sizeof(ROOTFS_SPLIT_NAME) + 1, GFP_KERNEL);
+		strcpy(name, ROOTFS_REMOVED_NAME);
+		part->mtd.name = name;
+		part->offset = 0;
+		part->mtd.size = 0;
+	}
+
+	return 0;
+}
+#endif /* CONFIG_SYNO_COMCERTO && CONFIG_MTD_ROOTFS_SPLIT */
+
 /*
  * This function, given a master MTD object and a partition table, creates
  * and registers slave MTD objects which are bound to the master according to
@@ -666,6 +1075,9 @@ int add_mtd_partitions(struct mtd_info *master,
 	struct mtd_part *slave;
 	uint64_t cur_offset = 0;
 	int i;
+#if defined(CONFIG_SYNO_COMCERTO) && defined(CONFIG_MTD_ROOTFS_SPLIT)
+	int ret;
+#endif
 
 	printk(KERN_NOTICE "Creating %d MTD partitions on \"%s\":\n", nbparts, master->name);
 
@@ -680,11 +1092,55 @@ int add_mtd_partitions(struct mtd_info *master,
 
 		add_mtd_device(&slave->mtd);
 
+#if defined(CONFIG_SYNO_COMCERTO) 
+		if (!strcmp(parts[i].name, "rootfs")) {
+#ifdef CONFIG_MTD_ROOTFS_ROOT_DEV
+			if (ROOT_DEV == 0) {
+				printk(KERN_NOTICE "mtd: partition \"rootfs\" "
+					"set to be root filesystem\n");
+				ROOT_DEV = MKDEV(MTD_BLOCK_MAJOR, slave->mtd.index);
+			}
+#endif
+#ifdef CONFIG_MTD_ROOTFS_SPLIT
+			ret = split_rootfs_data(master, &slave->mtd, &parts[i]);
+			/* if (ret == 0)
+			 * 	j++; */
+#endif
+		}
+#endif
 		cur_offset = slave->offset + slave->mtd.size;
 	}
 
 	return 0;
 }
+
+#if defined(CONFIG_SYNO_COMCERTO)
+int mtd_device_refresh(struct mtd_info *mtd)
+{
+	int ret = 0;
+
+	if (IS_PART(mtd)) {
+		struct mtd_part *part;
+		struct mtd_info *master;
+
+		part = PART(mtd);
+		master = part->master;
+		if (master->refresh_device)
+			ret = master->refresh_device(master);
+	}
+
+	if (!ret && mtd->refresh_device)
+		ret = mtd->refresh_device(mtd);
+
+#ifdef CONFIG_MTD_ROOTFS_SPLIT
+	if (!ret && IS_PART(mtd) && !strcmp(mtd->name, "rootfs"))
+		refresh_rootfs_split(mtd);
+#endif
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(mtd_device_refresh);
+#endif
 
 static DEFINE_SPINLOCK(part_parser_lock);
 static LIST_HEAD(part_parsers);
@@ -784,7 +1240,7 @@ int parse_mtd_partitions(struct mtd_info *master, const char **types,
 	return ret;
 }
 
-int mtd_is_partition(struct mtd_info *mtd)
+int mtd_is_partition(const struct mtd_info *mtd)
 {
 	struct mtd_part *part;
 	int ispart = 0;
@@ -800,3 +1256,31 @@ int mtd_is_partition(struct mtd_info *mtd)
 	return ispart;
 }
 EXPORT_SYMBOL_GPL(mtd_is_partition);
+
+/* Returns the size of the entire flash chip */
+uint64_t mtd_get_device_size(const struct mtd_info *mtd)
+{
+	if (!mtd_is_partition(mtd))
+		return mtd->size;
+
+	return PART(mtd)->master->size;
+}
+EXPORT_SYMBOL_GPL(mtd_get_device_size);
+
+#ifdef MY_ABC_HERE
+int SYNOMTDModifyPartInfo(struct mtd_info *mtd, unsigned long offset, unsigned long length)
+{
+	struct mtd_part *part = PART(mtd);
+
+	part->offset = offset;
+	part->offset &= part->master->size-1;
+
+	mtd->size = length;
+
+	if (part->offset + mtd->size > part->master->size) {
+		return -EFAULT;
+	}
+
+	return 0;
+}
+#endif /* MY_ABC_HERE */

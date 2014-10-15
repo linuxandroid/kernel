@@ -512,6 +512,17 @@ int hibernation_restore(int platform_mode)
 	return error;
 }
 
+#ifdef MY_ABC_HERE
+void syno_schedule_power_on_prepare(void)
+{
+    if (!hibernation_ops)
+        return;
+
+    hibernation_ops->begin();
+    hibernation_ops->end();
+}
+#endif
+
 /**
  * hibernation_platform_enter - Power off the system using the platform driver.
  */
@@ -724,7 +735,11 @@ int hibernate(void)
  * attempts to recover gracefully and make the kernel return to the normal mode
  * of operation.
  */
+#ifdef  MY_ABC_HERE
+int software_resume(void)
+#else
 static int software_resume(void)
+#endif
 {
 	int error;
 	unsigned int flags;
@@ -855,8 +870,10 @@ close_finish:
 	goto Finish;
 }
 
+#ifndef MY_ABC_HERE
 late_initcall(software_resume);
 
+#endif
 
 static const char * const hibernation_modes[] = {
 	[HIBERNATION_PLATFORM]	= "platform",

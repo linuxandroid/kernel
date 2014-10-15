@@ -363,6 +363,13 @@ struct ext3_inode {
 
 #endif /* defined(__KERNEL__) || defined(__linux__) */
 
+#ifdef MY_ABC_HERE
+#define ext3_CreateTime		i_reserved1
+#endif
+#ifdef MY_ABC_HERE
+#define ext3_mode2			i_reserved2
+#endif
+
 /*
  * File system states
  */
@@ -381,7 +388,7 @@ struct ext3_inode {
  * Mount flags
  */
 #define EXT3_MOUNT_CHECK		0x00001	/* Do mount-time checks */
-/* EXT3_MOUNT_OLDALLOC was there */
+#define EXT3_MOUNT_OLDALLOC		0x00002  /* Don't use the new Orlov allocator */
 #define EXT3_MOUNT_GRPID		0x00004	/* Create files with directory's group */
 #define EXT3_MOUNT_DEBUG		0x00008	/* Some debugging messages */
 #define EXT3_MOUNT_ERRORS_CONT		0x00010	/* Continue on errors */
@@ -527,7 +534,14 @@ struct ext3_super_block {
 	__u8	s_log_groups_per_flex;  /* FLEX_BG group size */
 	__u8	s_reserved_char_pad2;
 	__le16  s_reserved_pad;
+#if defined(MY_ABC_HERE) || defined (MY_ABC_HERE)
+	__u32	s_reserved[159];	/* Padding to the end of the block */
+	__le32	s_archive_version;	/* Last archived version */
+	__le32	s_archive_version_obsoleted;
+	__le32  s_syno_hash_magic;	/* Enable Htree if the magic is given */
+#else
 	__u32   s_reserved[162];        /* Padding to the end of the block */
+#endif
 };
 
 #ifdef __KERNEL__
@@ -755,9 +769,17 @@ static inline __le16 ext3_rec_len_to_disk(unsigned len)
  * (c) Daniel Phillips, 2001
  */
 
+#ifdef MY_ABC_HERE
+#define SYNO_HASH_MAGIC       0x01856E96      // 25521814
+#define is_dx(dir) ((EXT3_SB(dir->i_sb)->s_es->s_syno_hash_magic == cpu_to_le32(SYNO_HASH_MAGIC)) && \
+					!(EXT3_HAS_COMPAT_FEATURE(dir->i_sb, \
+						EXT3_FEATURE_COMPAT_DIR_INDEX)) && \
+					(EXT3_I(dir)->i_flags & EXT3_INDEX_FL))
+#else
 #define is_dx(dir) (EXT3_HAS_COMPAT_FEATURE(dir->i_sb, \
 				      EXT3_FEATURE_COMPAT_DIR_INDEX) && \
 		      (EXT3_I(dir)->i_flags & EXT3_INDEX_FL))
+#endif
 #define EXT3_DIR_LINK_MAX(dir) (!is_dx(dir) && (dir)->i_nlink >= EXT3_LINK_MAX)
 #define EXT3_DIR_LINK_EMPTY(dir) ((dir)->i_nlink == 2 || (dir)->i_nlink == 1)
 
@@ -918,6 +940,13 @@ extern void ext3_get_inode_flags(struct ext3_inode_info *);
 extern void ext3_set_aops(struct inode *inode);
 extern int ext3_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 		       u64 start, u64 len);
+#ifdef MY_ABC_HERE
+extern int syno_ext3_getattr(struct dentry *d, struct kstat *stat, int flags);
+#endif
+#ifdef MY_ABC_HERE
+extern int syno_ext3_get_archive_ver(struct dentry *, u32 *);
+extern int syno_ext3_set_archive_ver(struct dentry *, u32);
+#endif
 
 /* ioctl.c */
 extern long ext3_ioctl(struct file *, unsigned int, unsigned long);

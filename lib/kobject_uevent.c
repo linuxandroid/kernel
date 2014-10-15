@@ -50,6 +50,20 @@ static const char *kobject_actions[] = {
 	[KOBJ_OFFLINE] =	"offline",
 };
 
+#if defined(CONFIG_SYNO_COMCERTO)
+u64 uevent_next_seqnum(void)
+{
+	u64 seq;
+
+	mutex_lock(&uevent_sock_mutex);
+	seq = ++uevent_seqnum;
+	mutex_unlock(&uevent_sock_mutex);
+
+	return seq;
+}
+EXPORT_SYMBOL_GPL(uevent_next_seqnum);
+#endif
+
 /**
  * kobject_action_type - translate action string to numeric type
  *
@@ -139,6 +153,9 @@ int kobject_uevent_env(struct kobject *kobj, enum kobject_action action,
 	const struct kset_uevent_ops *uevent_ops;
 	int i = 0;
 	int retval = 0;
+#ifdef MY_DEF_HERE
+	static u32 ullCount = 0;
+#endif
 #ifdef CONFIG_NET
 	struct uevent_sock *ue_sk;
 #endif
@@ -304,6 +321,12 @@ int kobject_uevent_env(struct kobject *kobj, enum kobject_action action,
 		if (retval)
 			goto exit;
 
+#ifdef MY_DEF_HERE
+		ullCount++;
+		if (0 == ullCount % 30 && subsystem && strstr((char *)subsystem, "block")) {
+			msleep(10000);
+		}
+#endif
 		retval = call_usermodehelper(argv[0], argv,
 					     env->envp, UMH_WAIT_EXEC);
 	}
@@ -364,6 +387,45 @@ int add_uevent_var(struct kobj_uevent_env *env, const char *format, ...)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(add_uevent_var);
+
+#if defined(CONFIG_SYNO_COMCERTO)
+#if defined(CONFIG_NET)
+int broadcast_uevent(struct sk_buff *skb, __u32 pid, __u32 group,
+		     gfp_t allocation)
+{
+	struct uevent_sock *ue_sk;
+	int err = 0;
+
+	/* send netlink message */
+	mutex_lock(&uevent_sock_mutex);
+	list_for_each_entry(ue_sk, &uevent_sock_list, list) {
+		struct sock *uevent_sock = ue_sk->sk;
+		struct sk_buff *skb2;
+
+		skb2 = skb_clone(skb, allocation);
+		if (!skb2)
+			break;
+
+		err = netlink_broadcast(uevent_sock, skb2, pid, group,
+					allocation);
+		if (err)
+			break;
+	}
+	mutex_unlock(&uevent_sock_mutex);
+
+	kfree_skb(skb);
+	return err;
+}
+#else
+int broadcast_uevent(struct sk_buff *skb, __u32 pid, __u32 group,
+		     gfp_t allocation)
+{
+	kfree_skb(skb);
+	return 0;
+}
+#endif
+EXPORT_SYMBOL_GPL(broadcast_uevent);
+#endif
 
 #if defined(CONFIG_NET)
 static int uevent_net_init(struct net *net)

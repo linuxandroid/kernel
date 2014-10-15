@@ -140,6 +140,35 @@ static const struct e1000_reg_info e1000_reg_info_tbl[] = {
 	{}
 };
 
+#ifdef MY_ABC_HERE
+void e1000e_syno_led_switch(int iEnable)
+{
+	struct net_device *dev = NULL;
+	struct e1000_adapter *adapter = NULL;
+	struct e1000_hw *hw = NULL;
+	u32 ledctlValue;
+
+	for_each_netdev(&init_net, dev) {
+		adapter = netdev_priv(dev);
+		hw = &adapter->hw;
+
+		if (hw->mac.type == e1000_82574) {
+
+			ledctlValue = er32(LEDCTL);
+
+			if (iEnable) {
+				ew32(LEDCTL, hw->mac.ledctl_default);
+			} else {
+				hw->mac.ledctl_default = ledctlValue;
+				ledctlValue |= 0x000F0F0F; //turn off the 3 leds
+				ew32(LEDCTL, ledctlValue);
+			}
+		}
+	}
+}
+EXPORT_SYMBOL(e1000e_syno_led_switch);
+#endif /*MY_ABC_HERE*/
+
 /*
  * e1000_regdump - register printout routine
  */
@@ -3469,7 +3498,6 @@ int e1000e_up(struct e1000_adapter *adapter)
 
 	clear_bit(__E1000_DOWN, &adapter->state);
 
-	napi_enable(&adapter->napi);
 	if (adapter->msix_entries)
 		e1000_configure_msix(adapter);
 	e1000_irq_enable(adapter);
@@ -3531,7 +3559,6 @@ void e1000e_down(struct e1000_adapter *adapter)
 	e1e_flush();
 	usleep_range(10000, 20000);
 
-	napi_disable(&adapter->napi);
 	e1000_irq_disable(adapter);
 
 	del_timer_sync(&adapter->watchdog_timer);
@@ -3849,10 +3876,16 @@ static int e1000_close(struct net_device *netdev)
 {
 	struct e1000_adapter *adapter = netdev_priv(netdev);
 	struct pci_dev *pdev = adapter->pdev;
+	int count = E1000_CHECK_RESET_COUNT;
+
+	while (test_bit(__E1000_RESETTING, &adapter->state) && count--)
+		usleep_range(10000, 20000);
 
 	WARN_ON(test_bit(__E1000_RESETTING, &adapter->state));
 
 	pm_runtime_get_sync(&pdev->dev);
+
+	napi_disable(&adapter->napi);
 
 	if (!test_bit(__E1000_DOWN, &adapter->state)) {
 		e1000e_down(adapter);
@@ -5321,6 +5354,11 @@ static int __e1000_shutdown(struct pci_dev *pdev, bool *enable_wake,
 	netif_device_detach(netdev);
 
 	if (netif_running(netdev)) {
+		int count = E1000_CHECK_RESET_COUNT;
+
+		while (test_bit(__E1000_RESETTING, &adapter->state) && count--)
+			usleep_range(10000, 20000);
+
 		WARN_ON(test_bit(__E1000_RESETTING, &adapter->state));
 		e1000e_down(adapter);
 		e1000_free_irq(adapter);

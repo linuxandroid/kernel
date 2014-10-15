@@ -781,7 +781,7 @@ error:
 	return ERR_PTR(err);
 }
 
-static int vfat_create(struct inode *dir, struct dentry *dentry, int mode,
+static int vfat_create(struct inode *dir, struct dentry *dentry, umode_t mode,
 		       struct nameidata *nd)
 {
 	struct super_block *sb = dir->i_sb;
@@ -870,7 +870,7 @@ out:
 	return err;
 }
 
-static int vfat_mkdir(struct inode *dir, struct dentry *dentry, int mode)
+static int vfat_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 {
 	struct super_block *sb = dir->i_sb;
 	struct inode *inode;
@@ -1046,6 +1046,9 @@ error_inode:
 		fat_fs_error(new_dir->i_sb,
 			     "%s: Filesystem corrupted (i_pos %lld)",
 			     __func__, sinfo.i_pos);
+#ifdef MY_ABC_HERE
+		err = -ECORRUPT;
+#endif
 	}
 	goto out;
 }

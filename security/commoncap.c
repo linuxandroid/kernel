@@ -981,3 +981,6 @@ int cap_file_mmap(struct file *file, unsigned long reqprot,
 	}
 	return ret;
 }
+#ifdef CONFIG_AUFS_FS
+EXPORT_SYMBOL(cap_file_mmap);
+#endif /* SYNO_AUFS */

@@ -1735,7 +1735,12 @@ SYSCALL_DEFINE6(recvfrom, int, fd, void __user *, ubuf, size_t, size,
 {
 	struct socket *sock;
 	struct iovec iov;
+#ifdef MY_ABC_HERE
+	// Fix bug 4511 in DS2.0. This is a workaround method.
+	struct msghdr msg = {0};
+#else
 	struct msghdr msg;
+#endif
 	struct sockaddr_storage address;
 	int err, err2;
 	int fput_needed;
@@ -1750,6 +1755,9 @@ SYSCALL_DEFINE6(recvfrom, int, fd, void __user *, ubuf, size_t, size,
 	msg.msg_controllen = 0;
 	msg.msg_iovlen = 1;
 	msg.msg_iov = &iov;
+#if defined(CONFIG_SYNO_ARMADA)
+	msg.msg_flags = 0;
+#endif
 	iov.iov_len = size;
 	iov.iov_base = ubuf;
 	msg.msg_name = (struct sockaddr *)&address;

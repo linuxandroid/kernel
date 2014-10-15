@@ -22,6 +22,10 @@
 #include <asm/uaccess.h>
 
 
+#ifdef CONFIG_FS_SYNO_ACL
+#include "synoacl_int.h"
+#include <linux/syno_acl_xattr_ds.h>
+#endif
 /*
  * Check permissions for extended attribute access.  This is a bit complicated
  * because different namespaces have very different rules.
@@ -98,6 +102,11 @@ int __vfs_setxattr_noperm(struct dentry *dentry, const char *name,
 	if (issec)
 		inode->i_flags &= ~S_NOSEC;
 	if (inode->i_op->setxattr) {
+#ifdef CONFIG_FS_SYNO_ACL
+		if (0 > (error = synoacl_check_xattr_perm(name, dentry, MAY_WRITE_PERMISSION))) {
+			return error;
+		}
+#endif
 		error = inode->i_op->setxattr(dentry, name, value, size, flags);
 		if (!error) {
 			fsnotify_xattr(dentry);
@@ -114,7 +123,9 @@ int __vfs_setxattr_noperm(struct dentry *dentry, const char *name,
 
 	return error;
 }
-
+#ifdef CONFIG_FS_SYNO_ACL
+EXPORT_SYMBOL(__vfs_setxattr_noperm);
+#endif
 
 int
 vfs_setxattr(struct dentry *dentry, const char *name, const void *value,
@@ -238,7 +249,29 @@ vfs_getxattr(struct dentry *dentry, const char *name, void *value, size_t size)
 	error = security_inode_getxattr(dentry, name);
 	if (error)
 		return error;
+#ifdef CONFIG_FS_SYNO_ACL
+	if (name && (!strcmp(name, SYNO_ACL_XATTR_INHERIT) || !strcmp(name, SYNO_ACL_XATTR_PSEUDO_INHERIT_ONLY))) {
+		int error = 0;
+		int cmd = SYNO_ACL_INHERITED;
 
+		if (!strcmp(name, SYNO_ACL_XATTR_INHERIT)) {
+			if (!IS_SYNOACL(dentry)) {
+				return -EOPNOTSUPP;
+			}
+			cmd = SYNO_ACL_INHERITED;
+		} else if (!strcmp(name, SYNO_ACL_XATTR_PSEUDO_INHERIT_ONLY)) {
+			//We should return possible inherited ACL even file is in linux mode.
+			cmd = SYNO_ACL_PSEUDO_INHERIT_ONLY;
+		}
+
+		error = synoacl_op_perm(dentry, MAY_READ_PERMISSION);
+		if (error) {
+			return error;
+		}
+
+		return synoacl_op_xattr_get(dentry, cmd, value, size);
+	}
+#endif //CONFIG_FS_SYNO_ACL
 	if (!strncmp(name, XATTR_SECURITY_PREFIX,
 				XATTR_SECURITY_PREFIX_LEN)) {
 		const char *suffix = name + XATTR_SECURITY_PREFIX_LEN;
@@ -252,10 +285,18 @@ vfs_getxattr(struct dentry *dentry, const char *name, void *value, size_t size)
 		return ret;
 	}
 nolsm:
-	if (inode->i_op->getxattr)
+	if (inode->i_op->getxattr) {
+
+#ifdef CONFIG_FS_SYNO_ACL
+		if (0 > (error = synoacl_check_xattr_perm(name, dentry, MAY_READ_PERMISSION))) {
+			return error;
+		}
+#endif
 		error = inode->i_op->getxattr(dentry, name, value, size);
-	else
+	}
+	else {
 		error = -EOPNOTSUPP;
+	}
 
 	return error;
 }
@@ -298,6 +339,11 @@ vfs_removexattr(struct dentry *dentry, const char *name)
 	if (error)
 		return error;
 
+#ifdef CONFIG_FS_SYNO_ACL
+	if (0 > (error = synoacl_check_xattr_perm(name, dentry, MAY_WRITE_PERMISSION))) {
+		return error;
+	}
+#endif
 	mutex_lock(&inode->i_mutex);
 	error = inode->i_op->removexattr(dentry, name);
 	mutex_unlock(&inode->i_mutex);
@@ -397,7 +443,7 @@ SYSCALL_DEFINE5(fsetxattr, int, fd, const char __user *, name,
 	error = mnt_want_write_file(f);
 	if (!error) {
 		error = setxattr(dentry, name, value, size, flags);
-		mnt_drop_write(f->f_path.mnt);
+		mnt_drop_write_file(f);
 	}
 	fput(f);
 	return error;
@@ -624,7 +670,7 @@ SYSCALL_DEFINE2(fremovexattr, int, fd, const char __user *, name)
 	error = mnt_want_write_file(f);
 	if (!error) {
 		error = removexattr(dentry, name);
-		mnt_drop_write(f->f_path.mnt);
+		mnt_drop_write_file(f);
 	}
 	fput(f);
 	return error;
@@ -731,6 +777,7 @@ generic_setxattr(struct dentry *dentry, const char *name, const void *value, siz
 
 	if (size == 0)
 		value = "";  /* empty EA, do not remove */
+
 	handler = xattr_resolve_name(dentry->d_sb->s_xattr, &name);
 	if (!handler)
 		return -EOPNOTSUPP;

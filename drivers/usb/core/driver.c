@@ -31,6 +31,37 @@
 
 #include "usb.h"
 
+#ifdef MY_ABC_HERE
+#include <linux/synobios.h>
+#endif
+
+#ifdef MY_ABC_HERE
+extern int blIsUSBDeviceAtFrontPort(struct usb_device *usbdev);
+#endif
+
+#ifdef MY_ABC_HERE
+extern int (*funcSYNOGetHwCapability)(CAPABILITY *);
+extern int blIsCardReader(struct usb_device *usbdev);
+
+static unsigned char has_cardreader(void)
+{
+	CAPABILITY Capability;
+	unsigned char ret = 0;
+
+	Capability.id = CAPABILITY_CARDREADER;
+	Capability.support = 0;
+
+	if (funcSYNOGetHwCapability) {
+		if (funcSYNOGetHwCapability(&Capability)){
+			goto END;
+		}
+	}
+
+	ret = Capability.support;
+END:
+	return ret;
+}
+#endif
 
 #ifdef CONFIG_HOTPLUG
 
@@ -545,14 +576,15 @@ int usb_match_one_id_intf(struct usb_device *dev,
 			  struct usb_host_interface *intf,
 			  const struct usb_device_id *id)
 {
-	/* The interface class, subclass, and protocol should never be
+	/* The interface class, subclass, protocol and number should never be
 	 * checked for a match if the device class is Vendor Specific,
 	 * unless the match record specifies the Vendor ID. */
 	if (dev->descriptor.bDeviceClass == USB_CLASS_VENDOR_SPEC &&
 			!(id->match_flags & USB_DEVICE_ID_MATCH_VENDOR) &&
 			(id->match_flags & (USB_DEVICE_ID_MATCH_INT_CLASS |
 				USB_DEVICE_ID_MATCH_INT_SUBCLASS |
-				USB_DEVICE_ID_MATCH_INT_PROTOCOL)))
+				USB_DEVICE_ID_MATCH_INT_PROTOCOL |
+				USB_DEVICE_ID_MATCH_INT_NUMBER)))
 		return 0;
 
 	if ((id->match_flags & USB_DEVICE_ID_MATCH_INT_CLASS) &&
@@ -565,6 +597,10 @@ int usb_match_one_id_intf(struct usb_device *dev,
 
 	if ((id->match_flags & USB_DEVICE_ID_MATCH_INT_PROTOCOL) &&
 	    (id->bInterfaceProtocol != intf->desc.bInterfaceProtocol))
+		return 0;
+
+	if ((id->match_flags & USB_DEVICE_ID_MATCH_INT_NUMBER) &&
+	    (id->bInterfaceNumber != intf->desc.bInterfaceNumber))
 		return 0;
 
 	return 1;
@@ -768,6 +804,22 @@ static int usb_uevent(struct device *dev, struct kobj_uevent_env *env)
 			   usb_dev->descriptor.bDeviceSubClass,
 			   usb_dev->descriptor.bDeviceProtocol))
 		return -ENOMEM;
+
+#ifdef MY_ABC_HERE
+	if (blIsUSBDeviceAtFrontPort(usb_dev)) {
+		if (add_uevent_var(env, "FRONTPORT=1"))
+			return -ENOMEM;
+	}
+#endif
+
+#ifdef MY_ABC_HERE
+	if(has_cardreader()) {
+		if (blIsCardReader(usb_dev)) {
+			if (add_uevent_var(env, "CARDREADER=1"))
+				return -ENOMEM;
+		}
+	}
+#endif
 
 	return 0;
 }
@@ -1345,6 +1397,13 @@ int usb_resume(struct device *dev, pm_message_t msg)
 	 * Unbind the interfaces that will need rebinding later.
 	 */
 	} else {
+#ifdef CONFIG_SYNO_ARMADA
+		/*
+		 * Detect USB quirks again as they are lost after
+		 * suspend to mem.
+		 */
+		usb_detect_quirks(udev);
+#endif
 		status = usb_resume_both(udev, msg);
 		if (status == 0) {
 			pm_runtime_disable(dev);

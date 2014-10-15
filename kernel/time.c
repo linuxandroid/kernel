@@ -168,8 +168,10 @@ int do_sys_settimeofday(const struct timespec *tv, const struct timezone *tz)
 		update_vsyscall_tz();
 		if (firsttime) {
 			firsttime = 0;
+#ifndef MY_ABC_HERE
 			if (!tv)
 				warp_clock();
+#endif
 		}
 	}
 	if (tv)

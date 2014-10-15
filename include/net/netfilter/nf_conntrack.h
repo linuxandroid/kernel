@@ -100,6 +100,14 @@ struct nf_conn_help {
 #include <net/netfilter/ipv4/nf_conntrack_ipv4.h>
 #include <net/netfilter/ipv6/nf_conntrack_ipv6.h>
 
+#if defined(CONFIG_SYNO_COMCERTO) && defined(CONFIG_COMCERTO_FP)
+struct comcerto_fp_info {
+	int ifindex;
+	int iif;
+	u32 mark;
+};
+#endif
+
 struct nf_conn {
 	/* Usage count in here is 1 for hash table/destruct timer, 1 per skb,
            plus 1 for any connection(s) we are `master' for */
@@ -128,10 +136,48 @@ struct nf_conn {
 	u_int32_t secmark;
 #endif
 
+#if defined(CONFIG_SYNO_ARMADA)
+#if defined(CONFIG_NETFILTER_XT_MATCH_LAYER7) || \
+    defined(CONFIG_NETFILTER_XT_MATCH_LAYER7_MODULE)
+	struct {
+		/*
+		 * e.g. "http". NULL before decision. "unknown" after decision
+		 * if no match.
+		 */
+		char *app_proto;
+		/*
+		 * application layer data so far. NULL after match decision.
+		 */
+		char *app_data;
+		unsigned int app_data_len;
+	} layer7;
+#endif
+#endif
+
+#if defined(CONFIG_SYNO_COMCERTO) && defined(CONFIG_COMCERTO_FP)
+	struct comcerto_fp_info fp_info[IP_CT_DIR_MAX];
+#endif
+
 	/* Extensions */
 	struct nf_ct_ext *ext;
 #ifdef CONFIG_NET_NS
 	struct net *ct_net;
+#endif
+
+#if defined(CONFIG_SYNO_COMCERTO) && (defined(CONFIG_NETFILTER_XT_MATCH_LAYER7) || \
+    defined(CONFIG_NETFILTER_XT_MATCH_LAYER7_MODULE))
+	struct {
+		/*
+		 * e.g. "http". NULL before decision. "unknown" after decision
+		 * if no match.
+		 */
+		char *app_proto;
+		/*
+		 * application layer data so far. NULL after match decision.
+		 */
+		char *app_data;
+		unsigned int app_data_len;
+	} layer7;
 #endif
 
 	/* Storage reserved for other modules, must be the last member */
@@ -315,11 +361,23 @@ static inline bool nf_is_loopback_packet(const struct sk_buff *skb)
 
 struct kernel_param;
 
+#if defined(CONFIG_SYNO_COMCERTO)
+extern int nf_conntrack_set_dpi_allow_report(struct sk_buff *skb);
+extern int nf_conntrack_set_dpi_allow_and_mark(struct sk_buff *skb, int mark);
+#endif
+
 extern int nf_conntrack_set_hashsize(const char *val, struct kernel_param *kp);
 extern unsigned int nf_conntrack_htable_size;
 extern unsigned int nf_conntrack_max;
 extern unsigned int nf_conntrack_hash_rnd;
 void init_nf_conntrack_hash_rnd(void);
+
+#if defined(CONFIG_SYNO_ARMADA) && defined(CONFIG_MV_LINUX_COUNTERS_DISABLE)
+
+#define NF_CT_STAT_INC(net, count)
+#define NF_CT_STAT_INC_ATOMIC(net, count)
+
+#else
 
 #define NF_CT_STAT_INC(net, count)	\
 	__this_cpu_inc((net)->ct.stat->count)
@@ -329,6 +387,8 @@ do {							\
 	__this_cpu_inc((net)->ct.stat->count);		\
 	local_bh_enable();				\
 } while (0)
+
+#endif /* CONFIG_MV_LINUX_COUNTERS_DISABLE */
 
 #define MODULE_ALIAS_NFCT_HELPER(helper) \
         MODULE_ALIAS("nfct-helper-" helper)

@@ -49,6 +49,11 @@
 #include <linux/io.h>
 #include <linux/mtd/partitions.h>
 
+#if defined(CONFIG_SYNO_ARMADA)
+#ifdef CONFIG_MTD_NAND_NFC_GANG_SUPPORT
+static char nand_name[128];
+#endif
+#endif
 /* Define default oob placement schemes for large and small page devices */
 static struct nand_ecclayout nand_oob_8 = {
 	.eccbytes = 3,
@@ -2981,10 +2986,31 @@ static struct nand_flash_dev *nand_get_flash_type(struct mtd_info *mtd,
 	if (!type->name)
 		return ERR_PTR(-ENODEV);
 
-	if (!mtd->name)
+#if defined(CONFIG_SYNO_ARMADA)
+	if (!mtd->name){
+#ifdef CONFIG_MTD_NAND_NFC_GANG_SUPPORT
+		sprintf(nand_name, "%s%s", type->name,
+				(chip->num_devs == 2) ? " - Ganged" : "");
+		type->name = nand_name;
+#endif
 		mtd->name = type->name;
+	}
+#else
+	if (!mtd->name)
+ 		mtd->name = type->name;
+#endif
+
 
 	chip->chipsize = (uint64_t)type->chipsize << 20;
+#if defined(CONFIG_SYNO_ARMADA)
+#ifdef CONFIG_MTD_NAND_NFC_GANG_SUPPORT
+	chip->chipsize *= chip->num_devs;
+	if(chip->num_devs > 1)
+		type->options |= NAND_BUSWIDTH_16;
+#endif
+#endif
+
+
 
 	if (!type->pagesize && chip->init_size) {
 		/* Set the pagesize, oobsize, erasesize by the driver */
@@ -3034,6 +3060,11 @@ static struct nand_flash_dev *nand_get_flash_type(struct mtd_info *mtd,
 		} else {
 			/* Calc pagesize */
 			mtd->writesize = 1024 << (extid & 0x03);
+#if defined(CONFIG_SYNO_ARMADA)
+#ifdef CONFIG_MTD_NAND_NFC_GANG_SUPPORT
+			mtd->writesize *= chip->num_devs;
+#endif
+#endif
 			extid >>= 2;
 			/* Calc oobsize */
 			mtd->oobsize = (8 << (extid & 0x01)) *
@@ -3041,9 +3072,20 @@ static struct nand_flash_dev *nand_get_flash_type(struct mtd_info *mtd,
 			extid >>= 2;
 			/* Calc blocksize. Blocksize is multiples of 64KiB */
 			mtd->erasesize = (64 * 1024) << (extid & 0x03);
+#if defined(CONFIG_SYNO_ARMADA)
+#ifdef CONFIG_MTD_NAND_NFC_GANG_SUPPORT
+			mtd->erasesize *= chip->num_devs;
+#endif
+#endif
 			extid >>= 2;
 			/* Get buswidth information */
 			busw = (extid & 0x01) ? NAND_BUSWIDTH_16 : 0;
+#if defined(CONFIG_SYNO_ARMADA)
+#ifdef CONFIG_MTD_NAND_NFC_GANG_SUPPORT
+			if(chip->num_devs > 1)
+				busw = NAND_BUSWIDTH_16;
+#endif
+#endif
 		}
 	} else {
 		/*
@@ -3052,7 +3094,20 @@ static struct nand_flash_dev *nand_get_flash_type(struct mtd_info *mtd,
 		mtd->erasesize = type->erasesize;
 		mtd->writesize = type->pagesize;
 		mtd->oobsize = mtd->writesize / 32;
+#if defined(CONFIG_SYNO_ARMADA)
+#ifdef CONFIG_MTD_NAND_NFC_MLC_SUPPORT
+		/* New devices have non standard OOB size */
+		if (chip->oobsize_ovrd)
+			mtd->oobsize = chip->oobsize_ovrd;
+#endif
+#endif
 		busw = type->options & NAND_BUSWIDTH_16;
+#if defined(CONFIG_SYNO_ARMADA)
+#ifdef CONFIG_MTD_NAND_NFC_GANG_SUPPORT
+		mtd->erasesize *= chip->num_devs;
+		mtd->writesize *= chip->num_devs;
+#endif
+#endif
 
 		/*
 		 * Check for Spansion/AMD ID + repeating 5th, 6th byte since
@@ -3259,6 +3314,11 @@ int nand_scan_tail(struct mtd_info *mtd)
 		case 128:
 			chip->ecc.layout = &nand_oob_128;
 			break;
+#if defined(CONFIG_SYNO_COMCERTO)
+		case 224:
+			chip->ecc.layout = &nand_oob_128;
+			break;
+#endif
 		default:
 			pr_warn("No oob scheme defined for oobsize %d\n",
 				   mtd->oobsize);

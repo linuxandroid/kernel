@@ -163,7 +163,6 @@ struct linux_xfrm_mib {
 		__this_cpu_add(mib[0]->mibs[basefield##OCTETS], addend);	\
 	} while (0)
 
-
 #if BITS_PER_LONG==32
 
 #define SNMP_ADD_STATS64_BH(mib, field, addend) 			\

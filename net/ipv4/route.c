@@ -91,6 +91,9 @@
 #include <linux/rcupdate.h>
 #include <linux/times.h>
 #include <linux/slab.h>
+#if defined(CONFIG_SYNO_ARMADA)
+#include <linux/mv_nfp.h>
+#endif
 #include <linux/prefetch.h>
 #include <net/dst.h>
 #include <net/net_namespace.h>
@@ -660,6 +663,14 @@ static inline int ip_rt_proc_init(void)
 
 static inline void rt_free(struct rtable *rt)
 {
+#if defined(CONFIG_SYNO_ARMADA)
+#if defined(CONFIG_MV_ETH_NFP_HOOKS)
+		if (rt->nfp)
+			if (nfp_mgr_p->nfp_hook_fib_rule_del)
+				nfp_mgr_p->nfp_hook_fib_rule_del(AF_INET, (u8 *)(&rt->rt_src), (u8*)(&rt->rt_dst),
+							rt->rt_iif, rt->dst.dev->ifindex);
+#endif /* CONFIG_MV_ETH_NFP_HOOKS */
+#endif
 	call_rcu_bh(&rt->dst.rcu_head, dst_rcu_free);
 }
 
@@ -691,6 +702,16 @@ static int rt_may_expire(struct rtable *rth, unsigned long tmo1, unsigned long t
 	if (atomic_read(&rth->dst.__refcnt))
 		goto out;
 
+#if defined(CONFIG_SYNO_ARMADA)
+#if defined(CONFIG_MV_ETH_NFP_HOOKS)
+	if (rth->nfp) {
+		if (nfp_mgr_p->nfp_hook_fib_rule_age)
+			if (nfp_mgr_p->nfp_hook_fib_rule_age(AF_INET, (u8 *)(&rth->rt_src), (u8 *)(&rth->rt_dst),
+						rth->rt_iif, rth->dst.dev->ifindex))
+			rth->dst.lastuse = jiffies;
+	}
+#endif /* CONFIG_MV_ETH_NFP_HOOKS */
+#endif
 	age = jiffies - rth->dst.lastuse;
 	if ((age <= tmo1 && !rt_fast_clean(rth)) ||
 	    (age <= tmo2 && rt_valuable(rth)))
@@ -804,6 +825,38 @@ static void rt_do_flush(struct net *net, int process_context)
 		}
 	}
 }
+
+#if defined(CONFIG_SYNO_ARMADA)
+#if defined(CONFIG_MV_ETH_NFP_HOOKS)
+void nfp_fib_sync(void)
+{
+	struct rtable *rt;
+	int h;
+
+	for (h = 0; h <= rt_hash_mask; h++) {
+		if (!rt_hash_table[h].chain)
+			continue;
+
+		rcu_read_lock_bh();
+		for (rt = rcu_dereference_bh(rt_hash_table[h].chain); rt;
+		    rt = rcu_dereference_bh(rt->dst.rt_next)) {
+			if (rt_is_expired(rt))
+				continue;
+
+			rt->nfp = false;
+			if (!(rt->rt_flags & (RTCF_MULTICAST | RTCF_BROADCAST | RTCF_LOCAL | RTCF_REJECT))) {
+				if (nfp_mgr_p->nfp_hook_fib_rule_add)
+					if (!nfp_mgr_p->nfp_hook_fib_rule_add(AF_INET, (u8 *)(&rt->rt_src), (u8 *)(&rt->rt_dst),
+					  (u8 *)(&rt->rt_gateway), rt->rt_iif, rt->dst.dev->ifindex))
+					rt->nfp = true;
+			}
+		}
+		rcu_read_unlock_bh();
+	}
+}
+EXPORT_SYMBOL(nfp_fib_sync);
+#endif /* CONFIG_MV_ETH_NFP_HOOKS */
+#endif
 
 /*
  * While freeing expired entries, we compute average chain length
@@ -2053,6 +2106,11 @@ static int ip_route_input_mc(struct sk_buff *skb, __be32 daddr, __be32 saddr,
 	if (!rth)
 		goto e_nobufs;
 
+#if defined(CONFIG_SYNO_ARMADA)
+#if defined(CONFIG_MV_ETH_NFP_HOOKS)
+	rth->nfp = false;
+#endif /* CONFIG_MV_ETH_NFP_HOOKS */
+#endif
 #ifdef CONFIG_IP_ROUTE_CLASSID
 	rth->dst.tclassid = itag;
 #endif
@@ -2215,8 +2273,20 @@ static int __mkroute_input(struct sk_buff *skb,
 	rth->dst.output = ip_output;
 
 	rt_set_nexthop(rth, NULL, res, res->fi, res->type, itag);
+#if defined(CONFIG_SYNO_ARMADA)
+#if defined(CONFIG_MV_ETH_NFP_HOOKS)
+	rth->nfp = false;
+	if (!(rth->rt_flags & (RTCF_MULTICAST | RTCF_BROADCAST | RTCF_LOCAL | RTCF_REJECT))) {
+		if (nfp_mgr_p->nfp_hook_fib_rule_add)
+			if (!nfp_mgr_p->nfp_hook_fib_rule_add(AF_INET, (u8 *)(&rth->rt_src), (u8 *)(&rth->rt_dst),
+					(u8 *)(&rth->rt_gateway), rth->rt_iif, rth->dst.dev->ifindex))
+			rth->nfp = true;
+	}
+#endif /* CONFIG_MV_ETH_NFP_HOOKS */
+#endif
 
 	*result = rth;
+
 	err = 0;
  cleanup:
 	return err;
@@ -2367,6 +2437,11 @@ local_input:
 	if (!rth)
 		goto e_nobufs;
 
+#if defined(CONFIG_SYNO_ARMADA)
+#if defined(CONFIG_MV_ETH_NFP_HOOKS)
+	rth->nfp = false;
+#endif /* CONFIG_MV_ETH_NFP_HOOKS */
+#endif
 	rth->dst.input= ip_local_deliver;
 	rth->dst.output= ip_rt_bug;
 #ifdef CONFIG_IP_ROUTE_CLASSID
@@ -2578,6 +2653,11 @@ static struct rtable *__mkroute_output(const struct fib_result *res,
 	if (!rth)
 		return ERR_PTR(-ENOBUFS);
 
+#if defined(CONFIG_SYNO_ARMADA)
+#if defined(CONFIG_MV_ETH_NFP_HOOKS)
+	rth->nfp = false;
+#endif /* CONFIG_MV_ETH_NFP_HOOKS */
+#endif
 	rth->dst.output = ip_output;
 
 	rth->rt_key_dst	= orig_daddr;
@@ -2917,6 +2997,11 @@ struct dst_entry *ipv4_blackhole_route(struct net *net, struct dst_entry *dst_or
 		if (new->dev)
 			dev_hold(new->dev);
 
+#if defined(CONFIG_SYNO_ARMADA)
+#if defined(CONFIG_MV_ETH_NFP_HOOKS)
+		rt->nfp = false;
+#endif /* CONFIG_MV_ETH_NFP_HOOKS */
+#endif
 		rt->rt_key_dst = ort->rt_key_dst;
 		rt->rt_key_src = ort->rt_key_src;
 		rt->rt_key_tos = ort->rt_key_tos;
@@ -3013,7 +3098,11 @@ static int rt_fill_info(struct net *net,
 	if (rt->rt_dst != rt->rt_gateway)
 		NLA_PUT_BE32(skb, RTA_GATEWAY, rt->rt_gateway);
 
+#ifdef CONFIG_ARCH_COMCERTO
+	if (rtnetlink_put_metrics_2(skb, dst_metrics_ptr(&rt->dst), &rt->dst) < 0)
+#else
 	if (rtnetlink_put_metrics(skb, dst_metrics_ptr(&rt->dst)) < 0)
+#endif
 		goto nla_put_failure;
 
 	if (rt->rt_mark)
@@ -3499,15 +3588,21 @@ int __init ip_rt_init(void)
 	if (ip_rt_proc_init())
 		printk(KERN_ERR "Unable to create route proc files\n");
 #ifdef CONFIG_XFRM
+#ifdef MY_DEF_HERE
+	mdelay(500);
+#endif
 	xfrm_init();
 	xfrm4_init(ip_rt_max_size);
+#ifdef MY_DEF_HERE
+	mdelay(500);
+#endif
 #endif
 	rtnl_register(PF_INET, RTM_GETROUTE, inet_rtm_getroute, NULL, NULL);
 
 #ifdef CONFIG_SYSCTL
 	register_pernet_subsys(&sysctl_route_ops);
 #endif
-	register_pernet_subsys(&rt_genid_ops);
+
 	return rc;
 }
 

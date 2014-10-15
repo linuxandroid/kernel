@@ -202,6 +202,19 @@ static int wait_till_ready(struct m25p *flash)
 	return 1;
 }
 
+#ifdef MY_ABC_HERE
+static int unlock_chip(struct mtd_info *mtd, loff_t ofs, uint64_t len)
+{
+        return 0;
+}
+
+static int lock_chip(struct mtd_info *mtd, loff_t ofs, size_t len)
+{
+        return 0;
+}
+#endif /* MY_ABC_HERE */
+
+
 /*
  * Erase the whole flash memory
  *
@@ -674,6 +687,7 @@ static const struct spi_device_id m25p_ids[] = {
 	{ "160s33b",  INFO(0x898911, 0, 64 * 1024,  32, 0) },
 	{ "320s33b",  INFO(0x898912, 0, 64 * 1024,  64, 0) },
 	{ "640s33b",  INFO(0x898913, 0, 64 * 1024, 128, 0) },
+	{ "n25q064",  INFO(0x20ba17, 0, 64 * 1024, 128, 0) },
 
 	/* Macronix */
 	{ "mx25l4005a",  INFO(0xc22013, 0, 64 * 1024,   8, SECT_4K) },
@@ -910,6 +924,10 @@ static int __devinit m25p_probe(struct spi_device *spi)
 	flash->mtd.size = info->sector_size * info->n_sectors;
 	flash->mtd.erase = m25p80_erase;
 	flash->mtd.read = m25p80_read;
+#ifdef MY_ABC_HERE
+	flash->mtd.lock    = lock_chip;
+	flash->mtd.unlock  = unlock_chip;
+#endif /* MY_ABC_HERE */
 
 	/* sst flash chips use AAI word program */
 	if (JEDEC_MFR(info->jedec_id) == CFI_MFR_SST)

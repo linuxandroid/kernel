@@ -9,7 +9,19 @@
 #define _SCSI_SCSI_H
 
 #include <linux/types.h>
+#ifdef __KERNEL__
 #include <linux/scatterlist.h>
+#endif
+
+#if 1 /* SYNO */
+/**
+ * XXX Define u8 type for user-space apps as workaround.
+ * Install kernel header is not work for this case
+ */
+#ifndef __KERNEL__
+typedef unsigned char u8;
+#endif
+#endif /* SYNO */
 
 struct scsi_cmnd;
 
@@ -181,6 +193,7 @@ struct scsi_cmnd;
 #define	ATA_16		      0x85	/* 16-byte pass-thru */
 #define	ATA_12		      0xa1	/* 12-byte pass-thru */
 
+#ifdef __KERNEL__
 /*
  *	SCSI command lengths
  */
@@ -213,6 +226,9 @@ scsi_command_size(const unsigned char *cmnd)
 		scsi_varlen_cdb_length(cmnd) : COMMAND_SIZE(cmnd[0]);
 }
 
+/* Returns a human-readable name for the device */
+extern const char * scsi_device_type(unsigned type);
+#endif
 /*
  *  SCSI Architecture Model (SAM) Status codes. Taken from SAM-3 draft
  *  T10/1561-D Revision 4 Draft dated 7th November 2002.
@@ -327,9 +343,6 @@ enum scsi_protocol {
 	SCSI_PROTOCOL_ATA = 8,
 	SCSI_PROTOCOL_UNSPEC = 0xf, /* No specific protocol */
 };
-
-/* Returns a human-readable name for the device */
-extern const char * scsi_device_type(unsigned type);
 
 /*
  * standard mode-select header prepended to all mode-select commands
@@ -560,5 +573,25 @@ static inline __u32 scsi_to_u32(__u8 *ptr)
 {
 	return (ptr[0]<<24) + (ptr[1]<<16) + (ptr[2]<<8) + ptr[3];
 }
+#ifdef SYNO_BADSECTOR_TEST
+#define SCSI_IOCTL_SET_BADSECTORS    0x5400
+
+typedef struct _tag_SdBadSectors {
+	unsigned int     rgSectors[101];
+	unsigned short     rgEnableSector[101];
+	unsigned short     uiEnable;   // 0-->disable, 1-->enable for read
+} SDBADSECTORS, *PSDBADSECTORS;
+#define EN_BAD_SECTOR_READ      0x01
+#define EN_BAD_SECTOR_WRITE     0x02
+
+extern SDBADSECTORS grgSdBadSectors[SYNO_MAX_INTERNAL_DISK];
+extern int gBadSectorTest;
+#define SynoGetInternalDiskSeq(szBdevName) (szBdevName[2] - 'a')
+#endif
+
+#ifdef MY_ABC_HERE
+#define SYNO_DISK_MODEL_LEN "24"
+#define SYNO_DISK_MODEL_NUM 24
+#endif
 
 #endif /* _SCSI_SCSI_H */

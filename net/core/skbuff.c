@@ -244,6 +244,88 @@ nodata:
 }
 EXPORT_SYMBOL(__alloc_skb);
 
+#if defined(CONFIG_SYNO_COMCERTO) && defined(CONFIG_ARCH_COMCERTO)
+/**
+ *	__alloc_skb_header	-	allocate a network buffer
+ *	@size: size to allocate
+ *	@gfp_mask: allocation mask
+ *	@fclone: allocate from fclone cache instead of head cache
+ *		and allocate a cloned (child) skb
+ *
+ *	Allocate a new &sk_buff. The returned buffer has no headroom and a
+ *	tail room of size bytes. The object has a reference count of one.
+ *	The return is the buffer. On a failure the return is %NULL.
+ *
+ *	Buffers may only be allocated from interrupts using a @gfp_mask of
+ *	%GFP_ATOMIC.
+ */
+struct sk_buff *__alloc_skb_header(unsigned int size, void *data, gfp_t gfp_mask,
+			    int fclone, int node)
+{
+	struct kmem_cache *cache;
+	struct skb_shared_info *shinfo;
+	struct sk_buff *skb;
+
+	cache = fclone ? skbuff_fclone_cache : skbuff_head_cache;
+
+	if (size <= SKB_DATA_ALIGN(sizeof(struct skb_shared_info))) {
+		skb = NULL;
+		goto out;
+	}
+
+	/* Get the HEAD */
+	skb = kmem_cache_alloc_node(cache, gfp_mask & ~__GFP_DMA, node);
+	if (!skb)
+		goto out;
+	prefetchw(skb);
+
+	/* kmalloc might give us more room than requested.
+	 * Put skb_shared_info exactly at the end of allocated zone,
+	 * to allow max possible filling before reallocation.
+	 */
+	size = SKB_WITH_OVERHEAD(ksize(data));
+	prefetchw(data + size);
+
+	/*
+	 * Only clear those fields we need to clear, not those that we will
+	 * actually initialise below. Hence, don't put any more fields after
+	 * the tail pointer in struct sk_buff!
+	 */
+	memset(skb, 0, offsetof(struct sk_buff, tail));
+	/* Account for allocated memory : skb + skb->head */
+	skb->truesize = SKB_TRUESIZE(size);
+	atomic_set(&skb->users, 1);
+	skb->head = data;
+	skb->data = data;
+	skb_reset_tail_pointer(skb);
+	skb->end = skb->tail + size;
+#ifdef NET_SKBUFF_DATA_USES_OFFSET
+	skb->mac_header = ~0U;
+#endif
+
+	/* make sure we initialize shinfo sequentially */
+	shinfo = skb_shinfo(skb);
+	memset(shinfo, 0, offsetof(struct skb_shared_info, dataref));
+	atomic_set(&shinfo->dataref, 1);
+	kmemcheck_annotate_variable(shinfo->destructor_arg);
+
+	if (fclone) {
+		struct sk_buff *child = skb + 1;
+		atomic_t *fclone_ref = (atomic_t *) (child + 1);
+
+		kmemcheck_annotate_bitfield(child, flags1);
+		kmemcheck_annotate_bitfield(child, flags2);
+		skb->fclone = SKB_FCLONE_ORIG;
+		atomic_set(fclone_ref, 1);
+
+		child->fclone = SKB_FCLONE_UNAVAILABLE;
+	}
+out:
+	return skb;
+}
+EXPORT_SYMBOL(__alloc_skb_header);
+#endif
+
 /**
  *	__netdev_alloc_skb - allocate an skbuff for rx on a specific device
  *	@dev: network device to receive on
@@ -329,7 +411,11 @@ static void skb_clone_fraglist(struct sk_buff *skb)
 		skb_get(list);
 }
 
+#if defined(CONFIG_SYNO_ARMADA)
+static inline void skb_release_data(struct sk_buff *skb)
+#else
 static void skb_release_data(struct sk_buff *skb)
+#endif
 {
 	if (!skb->cloned ||
 	    !atomic_sub_return(skb->nohdr ? (1 << SKB_DATAREF_SHIFT) + 1 : 1,
@@ -357,12 +443,26 @@ static void skb_release_data(struct sk_buff *skb)
 
 		kfree(skb->head);
 	}
+#if defined(CONFIG_SYNO_ARMADA)
+#ifdef CONFIG_NET_SKB_RECYCLE
+	/* Workaround for the cases when recycle callback was not called */
+	if (skb->hw_cookie) {
+		kfree(skb->hw_cookie);
+		skb->hw_cookie = NULL;
+	}
+	skb->skb_recycle = NULL;
+#endif /* CONFIG_NET_SKB_RECYCLE */	
+#endif
 }
 
 /*
  *	Free an skbuff by memory without cleaning the state.
  */
+#if defined(CONFIG_SYNO_ARMADA)
+static inline void kfree_skbmem(struct sk_buff *skb)
+#else
 static void kfree_skbmem(struct sk_buff *skb)
+#endif
 {
 	struct sk_buff *other;
 	atomic_t *fclone_ref;
@@ -393,7 +493,11 @@ static void kfree_skbmem(struct sk_buff *skb)
 	}
 }
 
+#if defined(CONFIG_SYNO_ARMADA)
+static inline void skb_release_head_state(struct sk_buff *skb)
+#else
 static void skb_release_head_state(struct sk_buff *skb)
+#endif
 {
 	skb_dst_drop(skb);
 #ifdef CONFIG_XFRM
@@ -404,10 +508,20 @@ static void skb_release_head_state(struct sk_buff *skb)
 		skb->destructor(skb);
 	}
 #if defined(CONFIG_NF_CONNTRACK) || defined(CONFIG_NF_CONNTRACK_MODULE)
+#if defined(CONFIG_SYNO_ARMADA)
+	if(skb->nfct) 
+		nf_conntrack_put(skb->nfct);
+#else
 	nf_conntrack_put(skb->nfct);
 #endif
+#endif
 #ifdef NET_SKBUFF_NF_DEFRAG_NEEDED
+#if defined(CONFIG_SYNO_ARMADA)
+	if(skb->nfct_reasm) 
+		nf_conntrack_put_reasm(skb->nfct_reasm);
+#else
 	nf_conntrack_put_reasm(skb->nfct_reasm);
+#endif
 #endif
 #ifdef CONFIG_BRIDGE_NETFILTER
 	nf_bridge_put(skb->nf_bridge);
@@ -422,7 +536,11 @@ static void skb_release_head_state(struct sk_buff *skb)
 }
 
 /* Free everything but the sk_buff shell. */
+#if defined(CONFIG_SYNO_ARMADA)
+static inline void skb_release_all(struct sk_buff *skb)
+#else
 static void skb_release_all(struct sk_buff *skb)
+#endif
 {
 	skb_release_head_state(skb);
 	skb_release_data(skb);
@@ -439,6 +557,13 @@ static void skb_release_all(struct sk_buff *skb)
 
 void __kfree_skb(struct sk_buff *skb)
 {
+#if defined(CONFIG_SYNO_ARMADA)
+#ifdef CONFIG_NET_SKB_RECYCLE
+	if (skb->skb_recycle && !skb->skb_recycle(skb))
+		return;
+#endif /* CONFIG_NET_SKB_RECYCLE */
+#endif
+ 
 	skb_release_all(skb);
 	kfree_skbmem(skb);
 }
@@ -525,7 +650,6 @@ bool skb_recycle_check(struct sk_buff *skb, int skb_size)
 {
 	if (!skb_is_recycleable(skb, skb_size))
 		return false;
-
 	skb_recycle(skb);
 
 	return true;
@@ -545,6 +669,9 @@ static void __copy_skb_header(struct sk_buff *new, const struct sk_buff *old)
 	new->l4_rxhash		= old->l4_rxhash;
 #ifdef CONFIG_XFRM
 	new->sp			= secpath_get(old->sp);
+#endif
+#if defined(CONFIG_SYNO_COMCERTO) && (defined(CONFIG_INET_IPSEC_OFFLOAD) || defined(CONFIG_INET6_IPSEC_OFFLOAD))
+        new->ipsec_offload      = old->ipsec_offload;
 #endif
 	memcpy(new->cb, old->cb, sizeof(old->cb));
 	new->csum		= old->csum;
@@ -594,6 +721,14 @@ static struct sk_buff *__skb_clone(struct sk_buff *n, struct sk_buff *skb)
 	n->cloned = 1;
 	n->nohdr = 0;
 	n->destructor = NULL;
+
+#if defined(CONFIG_SYNO_ARMADA)
+#ifdef CONFIG_NET_SKB_RECYCLE
+	n->skb_recycle = NULL;
+	n->hw_cookie = NULL;
+#endif /* CONFIG_NET_SKB_RECYCLE */
+#endif
+
 	C(tail);
 	C(end);
 	C(head);
@@ -919,6 +1054,18 @@ int pskb_expand_head(struct sk_buff *skb, int nhead, int ntail,
 	       offsetof(struct skb_shared_info, frags[skb_shinfo(skb)->nr_frags]));
 
 	if (fastpath) {
+
+#if defined(CONFIG_SYNO_ARMADA)
+#ifdef CONFIG_NET_SKB_RECYCLE
+		/* Workaround for the cases when recycle callback was not called */
+		if (skb->hw_cookie) {
+			kfree(skb->hw_cookie);
+			skb->hw_cookie = NULL;
+		}
+		skb->skb_recycle = NULL;
+#endif /* CONFIG_NET_SKB_RECYCLE */
+#endif
+
 		kfree(skb->head);
 	} else {
 		/* copy this zero copy skb frags */

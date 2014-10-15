@@ -255,6 +255,13 @@ static void tdi_reset (struct ehci_hcd *ehci)
 	reg_ptr = (u32 __iomem *)(((u8 __iomem *)ehci->regs) + USBMODE);
 	tmp = ehci_readl(ehci, reg_ptr);
 	tmp |= USBMODE_CM_HC;
+#if defined(CONFIG_SYNO_ARMADA)
+	/*
+	 * MRVL: Disable USB Streaming
+	 */
+	tmp |= (1 << 4);
+#endif
+
 	/* The default byte access to MMR space is LE after
 	 * controller reset. Set the required endian mode
 	 * for transfer buffers to match the host microprocessor
@@ -756,7 +763,11 @@ static int ehci_run (struct usb_hcd *hcd)
 		"USB %x.%x started, EHCI %x.%02x%s\n",
 		((ehci->sbrn & 0xf0)>>4), (ehci->sbrn & 0x0f),
 		temp >> 8, temp & 0xff,
+#if defined(CONFIG_SYNO_COMCERTO)
+		(ignore_oc || ehci->ignore_oc) ? ", overcurrent ignored" : "");
+#else
 		ignore_oc ? ", overcurrent ignored" : "");
+#endif
 
 	ehci_writel(ehci, INTR_MASK,
 		    &ehci->regs->intr_enable); /* Turn On Interrupts */
@@ -1262,6 +1273,13 @@ MODULE_LICENSE ("GPL");
 #define	PLATFORM_DRIVER		ehci_orion_driver
 #endif
 
+#if defined(CONFIG_SYNO_ARMADA)
+#ifdef CONFIG_PLAT_ARMADA
+#include "ehci_marvell.c"
+#define	PLATFORM_DRIVER		ehci_marvell_driver
+#endif
+#endif
+
 #ifdef CONFIG_ARCH_IXP4XX
 #include "ehci-ixp4xx.c"
 #define	PLATFORM_DRIVER		ixp4xx_ehci_driver
@@ -1343,12 +1361,23 @@ MODULE_LICENSE ("GPL");
 #error "missing bus glue for ehci-hcd"
 #endif
 
+#ifdef MY_ABC_HERE
+/* kernel command line should use syno_no_ehci=1 to skip ehci controller insert*/
+extern int gSynoNoEhci;
+#endif
+
 static int __init ehci_hcd_init(void)
 {
 	int retval = 0;
 
 	if (usb_disabled())
 		return -ENODEV;
+
+#ifdef MY_ABC_HERE
+	if (gSynoNoEhci) {
+		return -ENODEV;
+	}
+#endif
 
 	printk(KERN_INFO "%s: " DRIVER_DESC "\n", hcd_name);
 	set_bit(USB_EHCI_LOADED, &usb_hcds_loaded);

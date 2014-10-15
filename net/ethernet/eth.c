@@ -283,8 +283,10 @@ int eth_mac_addr(struct net_device *dev, void *p)
 {
 	struct sockaddr *addr = p;
 
+#ifndef MY_ABC_HERE
 	if (netif_running(dev))
 		return -EBUSY;
+#endif
 	if (!is_valid_ether_addr(addr->sa_data))
 		return -EADDRNOTAVAIL;
 	memcpy(dev->dev_addr, addr->sa_data, ETH_ALEN);
@@ -393,3 +395,4 @@ ssize_t sysfs_format_mac(char *buf, const unsigned char *addr, int len)
 	return (ssize_t)l;
 }
 EXPORT_SYMBOL(sysfs_format_mac);
+

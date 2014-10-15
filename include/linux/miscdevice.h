@@ -19,6 +19,15 @@
 #define APOLLO_MOUSE_MINOR	7
 #define PC110PAD_MINOR		9
 /*#define ADB_MOUSE_MINOR	10	FIXME OBSOLETE */
+#ifdef CONFIG_SYNO_USE_OCF_LINUX
+#define CRYPTODEV_MINOR		70	/* /dev/crypto */
+#endif
+#if defined(CONFIG_SYNO_ARMADA)
+#define CESADEV_MINOR		71	/* marvell CESA     */
+#define BTNSDEV_MINOR  		72	/* Marvell btns */
+#define SLICDEV_MINOR		73	/* Marvell SLIC control device */
+#define TDMDEV_MINOR		74	/* Marvell TDM test device */
+#endif
 #define WATCHDOG_MINOR		130	/* Watchdog timer     */
 #define TEMP_MINOR		131	/* Temperature Sensor */
 #define RTC_MINOR		135
@@ -42,6 +51,7 @@
 #define AUTOFS_MINOR		235
 #define MAPPER_CTRL_MINOR	236
 #define LOOP_CTRL_MINOR		237
+#define VHOST_NET_MINOR		238
 #define MISC_DYNAMIC_MINOR	255
 
 struct device;

@@ -1401,6 +1401,9 @@ unsigned long zap_page_range(struct vm_area_struct *vma, unsigned long address,
 	tlb_finish_mmu(&tlb, address, end);
 	return end;
 }
+#if defined(CONFIG_SYNO_COMCERTO)
+EXPORT_SYMBOL_GPL(zap_page_range);
+#endif
 
 /**
  * zap_vma_ptes - remove ptes mapping the vma
@@ -3076,6 +3079,9 @@ static inline int check_stack_guard_page(struct vm_area_struct *vma, unsigned lo
 	}
 	return 0;
 }
+#if defined(CONFIG_SYNO_COMCERTO)
+EXPORT_SYMBOL_GPL(vmtruncate_range);
+#endif
 
 /*
  * We enter with non-exclusive mmap_sem (to exclude vma changes,
@@ -4012,3 +4018,69 @@ void copy_user_huge_page(struct page *dst, struct page *src,
 	}
 }
 #endif /* CONFIG_TRANSPARENT_HUGEPAGE || CONFIG_HUGETLBFS */
+
+#ifdef MY_ABC_HERE
+extern struct mm_struct *syno_get_task_mm(struct task_struct *task);
+int syno_access_process_vm(struct task_struct *tsk, unsigned long addr, void *buf, int len, int write)
+{
+	struct mm_struct *mm;
+	struct vm_area_struct *vma;
+	void *old_buf = buf;
+
+	mm = syno_get_task_mm(tsk);
+	if (!mm)
+		return 0;
+
+	down_read(&mm->mmap_sem);
+	/* ignore errors, just check how much was successfully transferred */
+	while (len) {
+		int bytes, ret, offset;
+		void *maddr;
+		struct page *page = NULL;
+
+		ret = get_user_pages(tsk, mm, addr, 1,
+				write, 1, &page, &vma);
+		if (ret <= 0) {
+			/*
+			 * Check if this is a VM_IO | VM_PFNMAP VMA, which
+			 * we can access using slightly different code.
+			 */
+#ifdef CONFIG_HAVE_IOREMAP_PROT
+			vma = find_vma(mm, addr);
+			if (!vma)
+				break;
+			if (vma->vm_ops && vma->vm_ops->access)
+				ret = vma->vm_ops->access(vma, addr, buf,
+							  len, write);
+			if (ret <= 0)
+#endif
+				break;
+			bytes = ret;
+		} else {
+			bytes = len;
+			offset = addr & (PAGE_SIZE-1);
+			if (bytes > PAGE_SIZE-offset)
+				bytes = PAGE_SIZE-offset;
+
+			maddr = kmap(page);
+			if (write) {
+				copy_to_user_page(vma, page, addr,
+						  maddr + offset, buf, bytes);
+				set_page_dirty_lock(page);
+			} else {
+				copy_from_user_page(vma, page, addr,
+						    buf, maddr + offset, bytes);
+			}
+			kunmap(page);
+			page_cache_release(page);
+		}
+		len -= bytes;
+		buf += bytes;
+		addr += bytes;
+	}
+	up_read(&mm->mmap_sem);
+	mmput(mm);
+
+	return buf - old_buf;
+}
+#endif /* MY_ABC_HERE */

@@ -46,7 +46,9 @@ ENTRY(cpu_v7_proc_fin)
 	mrc	p15, 0, r0, c1, c0, 0		@ ctrl register
 	bic	r0, r0, #0x1000			@ ...i............
 	bic	r0, r0, #0x0006			@ .............ca.
+#if !defined(CONFIG_SYNO_COMCERTO)
 	mcr	p15, 0, r0, c1, c0, 0		@ disable caches
+#endif
 	mov	pc, lr
 ENDPROC(cpu_v7_proc_fin)
 
@@ -116,18 +118,27 @@ ENTRY(cpu_v7_switch_mm)
 #ifdef CONFIG_ARM_ERRATA_430973
 	mcr	p15, 0, r2, c7, c5, 6		@ flush BTAC/BTB
 #endif
+#if defined(CONFIG_SYNO_ARMADA_ARCH)
+	mrc	p15, 0, r2, c2, c0, 1		@ load TTB 1
+	mcr	p15, 0, r2, c2, c0, 0		@ into TTB 0
+#else
 #ifdef CONFIG_ARM_ERRATA_754322
 	dsb
 #endif
 	mcr	p15, 0, r2, c13, c0, 1		@ set reserved context ID
 	isb
 1:	mcr	p15, 0, r0, c2, c0, 0		@ set TTB 0
+#endif
 	isb
 #ifdef CONFIG_ARM_ERRATA_754322
 	dsb
 #endif
 	mcr	p15, 0, r1, c13, c0, 1		@ set context ID
 	isb
+#if defined(CONFIG_SYNO_ARMADA_ARCH)
+	mcr	p15, 0, r0, c2, c0, 0		@ set TTB 0
+	isb
+#endif
 #endif
 	mov	pc, lr
 ENDPROC(cpu_v7_switch_mm)
@@ -149,7 +160,11 @@ ENTRY(cpu_v7_set_pte_ext)
 	bic	r3, r1, #0x000003f0
 	bic	r3, r3, #PTE_TYPE_MASK
 	orr	r3, r3, r2
+#if !defined(CONFIG_SYNO_COMCERTO) || !defined(CONFIG_COMCERTO_64K_PAGES)
 	orr	r3, r3, #PTE_EXT_AP0 | 2
+#else
+	orr	r3, r3, #PTE_EXT_AP0 | 1
+#endif
 
 	tst	r1, #1 << 4
 	orrne	r3, r3, #PTE_EXT_TEX(1)
@@ -173,10 +188,26 @@ ENTRY(cpu_v7_set_pte_ext)
 	tstne	r1, #L_PTE_PRESENT
 	moveq	r3, #0
 
+#if !defined(CONFIG_SYNO_COMCERTO) || !defined(CONFIG_COMCERTO_64K_PAGES)
  ARM(	str	r3, [r0, #2048]! )
  THUMB(	add	r0, r0, #2048 )
  THUMB(	str	r3, [r0] )
 	mcr	p15, 0, r0, c7, c10, 1		@ flush_pte
+ #else
+	ldr r1, =32768		@ PTE_HWTABLE_OFF
+	add r1, r1, r0
+	add r2, r1, #64		@ 16*4 bytes
+ 1:
+	sub r2, r2, #4
+ 	str	r3, [r2]!
+	cmp r1, r2
+	blo 1b
+	mcr	p15, 0, r1, c7, c10, 1		@ flush_pte
+	add r1, r1, #32				@ 1 cache line, since HW PTE takes 64 bytes
+	mcr	p15, 0, r1, c7, c10, 1		@ flush_pte
+ #endif
+
+
 #endif
 	mov	pc, lr
 ENDPROC(cpu_v7_set_pte_ext)
@@ -277,9 +308,18 @@ ENDPROC(cpu_v7_do_resume)
  *	- cache type register is implemented
  */
 __v7_ca5mp_setup:
-__v7_ca9mp_setup:
+#if defined(CONFIG_SYNO_COMCERTO)
 	mov	r10, #(1 << 0)			@ TLB ops broadcasting
 	b	1f
+#endif
+
+__v7_ca9mp_setup:
+	mov	r10, #(1 << 0)			@ TLB ops broadcasting
+#if defined(CONFIG_SYNO_COMCERTO) && !defined(CONFIG_CPU_SPECULATIVE_ACCESS_DISABLED)
+	orr	r10, #(3 << 1)			@ L1 data prefetch, L2 prefetch hints enable
+#endif
+	b	1f
+
 __v7_ca15mp_setup:
 	mov	r10, #0
 1:

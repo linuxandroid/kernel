@@ -116,6 +116,10 @@
 #include <asm/fbio.h>
 #endif
 
+#ifdef CONFIG_SYNO_X64
+#include <linux/synobios.h>
+#endif
+
 static int w_long(unsigned int fd, unsigned int cmd,
 		compat_ulong_t __user *argp)
 {
@@ -223,6 +227,141 @@ static int do_video_set_spu_palette(unsigned int fd, unsigned int cmd,
 
 	return err;
 }
+
+#ifdef MY_ABC_HERE
+struct compat_dtv_property {
+	__u32 cmd;
+	__u32 reserved[3];
+	union {
+		__u32 data;
+		struct {
+			__u8 data[32];
+			__u32 len;
+			__u32 reserved1[3];
+			compat_uptr_t reserved2;
+		} buffer;
+	} u;
+	int result;
+};
+
+struct compat_dtv_properties {
+	__u32 num;
+	compat_uptr_t props;
+};
+
+#define FE_SET_PROPERTY32    _IOW('o', 82, struct compat_dtv_properties)
+#define FE_GET_PROPERTY32    _IOR('o', 83, struct compat_dtv_properties)
+
+static int do_fe_set_property(unsigned int fd, unsigned int cmd,
+		struct compat_dtv_properties __user *dtv32)
+{
+	struct dtv_properties __user *dtv;
+	struct dtv_property __user *properties;
+	struct compat_dtv_property __user *properties32;
+	compat_uptr_t data;
+
+	int err;
+	int i;
+	__u32 num;
+
+	err = get_user(num, &dtv32->num);
+	err |= get_user(data, &dtv32->props);
+
+	if(err)
+		return -EFAULT;
+
+	dtv = compat_alloc_user_space(sizeof(struct dtv_properties) +
+			sizeof(struct dtv_property) * num);
+	properties = (struct dtv_property*)((char*)dtv +
+			sizeof(struct dtv_properties));
+
+	err = put_user(properties, &dtv->props);
+	err |= put_user(num, &dtv->num);
+
+	properties32 = compat_ptr(data);
+
+	if(err)
+		return -EFAULT;
+
+	for(i = 0; i < num; i++) {
+		compat_uptr_t reserved2;
+
+		err |= copy_in_user(&properties[i], &properties32[i],
+				(8 * sizeof(__u32)) + (32 * sizeof(__u8)));
+		err |= get_user(reserved2, &properties32[i].u.buffer.reserved2);
+		err |= put_user(compat_ptr(reserved2),
+				&properties[i].u.buffer.reserved2);
+	}
+
+	if(err)
+		return -EFAULT;
+
+	err = sys_ioctl(fd, FE_SET_PROPERTY, (unsigned long) dtv);
+
+	for(i = 0; i < num; i++) {
+		if(copy_in_user(&properties32[i].result, &properties[i].result,
+					sizeof(int)))
+			return -EFAULT;
+	}
+
+	return err;
+}
+static int do_fe_get_property(unsigned int fd, unsigned int cmd,
+		struct compat_dtv_properties __user *dtv32)
+{
+	struct dtv_properties __user *dtv;
+	struct dtv_property __user *properties;
+	struct compat_dtv_property __user *properties32;
+	compat_uptr_t data;
+
+	int err;
+	int i;
+	__u32 num;
+
+	err = get_user(num, &dtv32->num);
+	err |= get_user(data, &dtv32->props);
+
+	if(err)
+		return -EFAULT;
+
+	dtv = compat_alloc_user_space(sizeof(struct dtv_properties) +
+			sizeof(struct dtv_property) * num);
+	properties = (struct dtv_property*)((char*)dtv +
+			sizeof(struct dtv_properties));
+
+	err = put_user(properties, &dtv->props);
+	err |= put_user(num, &dtv->num);
+
+	properties32 = compat_ptr(data);
+
+	if(err)
+		return -EFAULT;
+
+	for(i = 0; i < num; i++) {
+		compat_uptr_t reserved2;
+
+		err |= copy_in_user(&properties[i], &properties32[i],
+				(8 * sizeof(__u32)) + (32 * sizeof(__u8)));
+		err |= get_user(reserved2, &properties32[i].u.buffer.reserved2);
+		err |= put_user(compat_ptr(reserved2),
+				&properties[i].u.buffer.reserved2);
+	}
+
+	if(err)
+		return -EFAULT;
+
+	err = sys_ioctl(fd, FE_GET_PROPERTY, (unsigned long) dtv);
+
+	for(i = 0; i < num; i++) {
+
+		if(copy_in_user(&properties32[i], &properties[i],
+					sizeof(properties32[i])))
+			return -EFAULT;
+	}
+
+	return err;
+}
+#endif
 
 #ifdef CONFIG_BLOCK
 typedef struct sg_io_hdr32 {
@@ -887,6 +1026,17 @@ COMPATIBLE_IOCTL(FIGETBSZ)
 /* 'X' - originally XFS but some now in the VFS */
 COMPATIBLE_IOCTL(FIFREEZE)
 COMPATIBLE_IOCTL(FITHAW)
+#ifdef MY_ABC_HERE
+COMPATIBLE_IOCTL(FIGETVERSION)
+COMPATIBLE_IOCTL(FISETVERSION)
+COMPATIBLE_IOCTL(FIINCVERSION)
+COMPATIBLE_IOCTL(FISETFILEVERSION)
+#ifdef MY_ABC_HERE
+COMPATIBLE_IOCTL(FIGETBADVERSION)
+COMPATIBLE_IOCTL(FICLEARBADVERSION)
+COMPATIBLE_IOCTL(FISETBADVERSION)
+#endif
+#endif
 COMPATIBLE_IOCTL(KDGETKEYCODE)
 COMPATIBLE_IOCTL(KDSETKEYCODE)
 COMPATIBLE_IOCTL(KDGKBTYPE)
@@ -1376,6 +1526,84 @@ COMPATIBLE_IOCTL(JSIOCGVERSION)
 COMPATIBLE_IOCTL(JSIOCGAXES)
 COMPATIBLE_IOCTL(JSIOCGBUTTONS)
 COMPATIBLE_IOCTL(JSIOCGNAME(0))
+#ifdef CONFIG_SYNO_X64
+COMPATIBLE_IOCTL(SYNOIO_EXDISPLAY)
+COMPATIBLE_IOCTL(SYNOIO_NEXTEVENT)
+COMPATIBLE_IOCTL(SYNOIO_RTC_CONTROL_READ)
+COMPATIBLE_IOCTL(SYNOIO_RTC_CONTROL_WRITE)
+COMPATIBLE_IOCTL(SYNOIO_RTC_TIME_READ)
+COMPATIBLE_IOCTL(SYNOIO_RTC_TIME_WRITE)
+COMPATIBLE_IOCTL(SYNOIO_BUTTON_POWER)
+COMPATIBLE_IOCTL(SYNOIO_BUTTON_RESET)
+COMPATIBLE_IOCTL(SYNOIO_BUTTON_USB)
+COMPATIBLE_IOCTL(SYNOIO_SET_DISK_LED)
+COMPATIBLE_IOCTL(SYNOIO_GET_FAN_STATUS)
+COMPATIBLE_IOCTL(SYNOIO_SET_FAN_STATUS)
+COMPATIBLE_IOCTL(SYNOIO_GET_DS_MODEL)
+COMPATIBLE_IOCTL(SYNOIO_GET_DS_BRAND)
+COMPATIBLE_IOCTL(SYNOIO_GET_CPLD_VERSION)
+COMPATIBLE_IOCTL(SYNOIO_GET_TEMPERATURE)
+COMPATIBLE_IOCTL(SYNOIO_GET_CPLD_REG)
+COMPATIBLE_IOCTL(SYNOIO_GET_AUTO_POWERON)
+COMPATIBLE_IOCTL(SYNOIO_SET_AUTO_POWERON)
+COMPATIBLE_IOCTL(SYNOIO_GET_MEM_BYTE)
+COMPATIBLE_IOCTL(SYNOIO_SET_MEM_BYTE)
+COMPATIBLE_IOCTL(SYNOIO_SET_ALARM_LED)
+COMPATIBLE_IOCTL(SYNOIO_GET_HW_CAPABILITY)
+COMPATIBLE_IOCTL(SYNOIO_GET_FAN_NUM)
+COMPATIBLE_IOCTL(SYNOIO_GET_POWER_STATUS)
+COMPATIBLE_IOCTL(SYNOIO_SHUTDOWN_LOG)
+COMPATIBLE_IOCTL(SYNOIO_UNINITIALIZE)
+COMPATIBLE_IOCTL(SYNOIO_GET_SYS_STATUS)
+COMPATIBLE_IOCTL(SYNOIO_SET_SYS_STATUS)
+COMPATIBLE_IOCTL(SYNOIO_GET_MODULE_TYPE)
+COMPATIBLE_IOCTL(SYNOIO_GET_BUZZER_CLEARED)
+COMPATIBLE_IOCTL(SYNOIO_GET_BACKPLANE_STATUS)
+COMPATIBLE_IOCTL(SYNOIO_SET_UART2)
+COMPATIBLE_IOCTL(SYNOIO_GET_CPU_TEMPERATURE)
+COMPATIBLE_IOCTL(SYNOIO_SET_CPU_FAN_STATUS)
+COMPATIBLE_IOCTL(SYNOIO_MANUTIL_MODE)
+COMPATIBLE_IOCTL(SYNOIO_RECORD_EVENT)
+COMPATIBLE_IOCTL(SYNOIO_GPIO_PIN_READ)
+COMPATIBLE_IOCTL(SYNOIO_GPIO_PIN_WRITE)
+COMPATIBLE_IOCTL(SYNOIO_RTC_READ)
+COMPATIBLE_IOCTL(SYNOIO_RTC_READ_3)
+COMPATIBLE_IOCTL(SYNOIO_SDA_SDL_READ)
+COMPATIBLE_IOCTL(SYNOIO_SET_PHY_LED)
+COMPATIBLE_IOCTL(SYNOIO_SET_HDD_LED)
+COMPATIBLE_IOCTL(SYNOIO_SET_PWR_LED)
+COMPATIBLE_IOCTL(SYNOIO_CHECK_MICROP_ID)
+COMPATIBLE_IOCTL(SYNOIO_SET_BUZZER_CLEAR)
+#ifdef MY_ABC_HERE
+COMPATIBLE_IOCTL(SYNOIO_SUPERIO_READ)
+COMPATIBLE_IOCTL(SYNOIO_SUPERIO_WRITE)
+#endif
+#ifdef MY_ABC_HERE
+COMPATIBLE_IOCTL(SYNOIO_IS_FULLY_SUPPORT_EUP)
+#endif
+#ifdef MY_DEF_HERE
+COMPATIBLE_IOCTL(SYNOIO_GET_EUNIT_TYPE)
+#endif
+COMPATIBLE_IOCTL(BLKGETSIZE)
+#ifdef SYNO_BAD_SECTOR_DISK_DEBUG
+COMPATIBLE_IOCTL(DISK_BADSECTOR_ON)
+COMPATIBLE_IOCTL(DISK_BADSECTOR_OFF)
+COMPATIBLE_IOCTL(DISK_BADSECTOR_SET)
+COMPATIBLE_IOCTL(DISK_BADSECTOR_GET)
+COMPATIBLE_IOCTL(DISK_BADSECTOR_RESET)
+#endif
+#ifdef MY_ABC_HERE
+COMPATIBLE_IOCTL(GET_SYNC_STATUS)
+COMPATIBLE_IOCTL(GET_ARRAY_STATUS)
+#endif
+#ifdef MY_ABC_HERE
+COMPATIBLE_IOCTL(SD_IOCTL_IDLE)
+COMPATIBLE_IOCTL(SD_IOCTL_SUPPORT_SLEEP)
+#endif
+#ifdef SYNO_BADSECTOR_TEST
+COMPATIBLE_IOCTL(SCSI_IOCTL_SET_BADSECTORS)
+#endif
+#endif //CONFIG_SYNO_X64
 
 #ifdef TIOCGLTC
 COMPATIBLE_IOCTL(TIOCGLTC)
@@ -1472,6 +1700,12 @@ static long do_ioctl_trans(int fd, unsigned int cmd,
 		return do_video_stillpicture(fd, cmd, argp);
 	case VIDEO_SET_SPU_PALETTE:
 		return do_video_set_spu_palette(fd, cmd, argp);
+#ifdef MY_ABC_HERE
+	case FE_SET_PROPERTY32:
+		return do_fe_set_property(fd, cmd, argp);
+	case FE_GET_PROPERTY32:
+		return do_fe_get_property(fd, cmd, argp);
+#endif
 	}
 
 	/*
@@ -1586,6 +1820,17 @@ asmlinkage long compat_sys_ioctl(unsigned int fd, unsigned int cmd,
 	case FIONBIO:
 	case FIOASYNC:
 	case FIOQSIZE:
+#ifdef MY_ABC_HERE
+	case FIGETVERSION:
+	case FISETVERSION:
+	case FIINCVERSION:
+	case FISETFILEVERSION:
+#ifdef MY_ABC_HERE
+	case FIGETBADVERSION:
+	case FICLEARBADVERSION:
+	case FISETBADVERSION:
+#endif
+#endif
 		break;
 
 #if defined(CONFIG_IA64) || defined(CONFIG_X86_64)

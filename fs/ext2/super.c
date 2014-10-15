@@ -42,6 +42,8 @@ static void ext2_sync_super(struct super_block *sb,
 static int ext2_remount (struct super_block * sb, int * flags, char * data);
 static int ext2_statfs (struct dentry * dentry, struct kstatfs * buf);
 static int ext2_sync_fs(struct super_block *sb, int wait);
+static int ext2_freeze(struct super_block *sb);
+static int ext2_unfreeze(struct super_block *sb);
 
 void ext2_error(struct super_block *sb, const char *function,
 		const char *fmt, ...)
@@ -173,7 +175,6 @@ static struct inode *ext2_alloc_inode(struct super_block *sb)
 static void ext2_i_callback(struct rcu_head *head)
 {
 	struct inode *inode = container_of(head, struct inode, i_rcu);
-	INIT_LIST_HEAD(&inode->i_dentry);
 	kmem_cache_free(ext2_inode_cachep, EXT2_I(inode));
 }
 
@@ -208,6 +209,11 @@ static int init_inodecache(void)
 
 static void destroy_inodecache(void)
 {
+	/*
+	 * Make sure all delayed rcu free inodes are flushed before we
+	 * destroy cache.
+	 */
+	rcu_barrier();
 	kmem_cache_destroy(ext2_inode_cachep);
 }
 
@@ -308,6 +314,8 @@ static const struct super_operations ext2_sops = {
 	.put_super	= ext2_put_super,
 	.write_super	= ext2_write_super,
 	.sync_fs	= ext2_sync_fs,
+	.freeze_fs	= ext2_freeze,
+	.unfreeze_fs	= ext2_unfreeze,
 	.statfs		= ext2_statfs,
 	.remount_fs	= ext2_remount,
 	.show_options	= ext2_show_options,
@@ -593,6 +601,7 @@ static int ext2_setup_super (struct super_block * sb,
 	}
 	if (read_only)
 		return res;
+#ifndef MY_ABC_HERE
 	if (!(sbi->s_mount_state & EXT2_VALID_FS))
 		ext2_msg(sb, KERN_WARNING,
 			"warning: mounting unchecked fs, "
@@ -613,6 +622,7 @@ static int ext2_setup_super (struct super_block * sb,
 		ext2_msg(sb, KERN_WARNING,
 			"warning: checktime reached, "
 			"running e2fsck is recommended");
+#endif
 	if (!le16_to_cpu(es->s_max_mnt_count))
 		es->s_max_mnt_count = cpu_to_le16(EXT2_DFL_MAX_MNT_COUNT);
 	le16_add_cpu(&es->s_mnt_count, 1);
@@ -1190,6 +1200,35 @@ static int ext2_sync_fs(struct super_block *sb, int wait)
 	return 0;
 }
 
+static int ext2_freeze(struct super_block *sb)
+{
+	struct ext2_sb_info *sbi = EXT2_SB(sb);
+
+	/*
+	 * Open but unlinked files present? Keep EXT2_VALID_FS flag cleared
+	 * because we have unattached inodes and thus filesystem is not fully
+	 * consistent.
+	 */
+	if (atomic_long_read(&sb->s_remove_count)) {
+		ext2_sync_fs(sb, 1);
+		return 0;
+	}
+	/* Set EXT2_FS_VALID flag */
+	spin_lock(&sbi->s_lock);
+	sbi->s_es->s_state = cpu_to_le16(sbi->s_mount_state);
+	spin_unlock(&sbi->s_lock);
+	ext2_sync_super(sb, sbi->s_es, 1);
+
+	return 0;
+}
+
+static int ext2_unfreeze(struct super_block *sb)
+{
+	/* Just write sb to clear EXT2_VALID_FS flag */
+	ext2_write_super(sb);
+
+	return 0;
+}
 
 void ext2_write_super(struct super_block *sb)
 {

@@ -1,4 +1,4 @@
-/* $Id: isdn_common.c,v 1.1.2.3 2004/02/10 01:07:13 keil Exp $
+/* $Id: isdn_common.c,v 1.1.1.1 2010/04/15 12:27:50 khchen Exp $
  *
  * Linux ISDN subsystem, common used functions (linklevel).
  *

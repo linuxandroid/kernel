@@ -136,6 +136,9 @@ static int mtd_blktrans_thread(void *arg)
 	struct request *req = NULL;
 	int background_done = 0;
 
+#ifdef CONFIG_ARCH_GEN3	
+	down(&dev->thread_sem);
+#endif
 	spin_lock_irq(rq->queue_lock);
 
 	while (!kthread_should_stop()) {
@@ -162,7 +165,13 @@ static int mtd_blktrans_thread(void *arg)
 				set_current_state(TASK_RUNNING);
 
 			spin_unlock_irq(rq->queue_lock);
+#ifdef CONFIG_ARCH_GEN3	
+			up(&dev->thread_sem);
+#endif
 			schedule();
+#ifdef CONFIG_ARCH_GEN3	
+			down(&dev->thread_sem);
+#endif
 			spin_lock_irq(rq->queue_lock);
 			continue;
 		}
@@ -185,6 +194,9 @@ static int mtd_blktrans_thread(void *arg)
 		__blk_end_request_all(req, -EIO);
 
 	spin_unlock_irq(rq->queue_lock);
+#ifdef CONFIG_ARCH_GEN3	
+	up(&dev->thread_sem);
+#endif
 
 	return 0;
 }
@@ -444,6 +456,9 @@ int add_mtd_blktrans_dev(struct mtd_blktrans_dev *new)
 		ret = PTR_ERR(new->thread);
 		goto error4;
 	}
+#ifdef CONFIG_ARCH_GEN3	
+	sema_init(&new->thread_sem, 1);
+#endif
 	gd->driverfs_dev = &new->mtd->dev;
 
 	if (new->readonly)

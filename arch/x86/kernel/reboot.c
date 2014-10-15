@@ -569,9 +569,16 @@ static void native_machine_emergency_restart(void)
 			mach_reboot_fixups(); /* for board specific fixups */
 
 			for (i = 0; i < 10; i++) {
+#ifdef CONFIG_ARCH_GEN3
+/*
+ * Intel Media SOC Gen3 uses this specific method to reboot.
+*/
+				outb(0x2, 0xcf9);
+#else	
 				kb_wait();
 				udelay(50);
 				outb(0xfe, 0x64); /* pulse reset low */
+#endif
 				udelay(50);
 			}
 			if (attempt == 0 && orig_reboot_type == BOOT_ACPI) {
@@ -700,6 +707,20 @@ static void native_machine_halt(void)
 
 static void native_machine_power_off(void)
 {
+#ifdef CONFIG_ARCH_GEN3
+/*
+ * Intel Media SOC Gen3 uses this specific way to power off.
+*/
+	machine_shutdown();
+#ifdef MY_DEF_HERE
+	outb(SYNO_EVANSPORT_SET8N1, SYNO_EVANSPORT_TTYS1_PORT + SYNO_EVANSPORT_LCR);
+	outb(SYNO_EVANSPORT_SHUTDOWN_CMD, SYNO_EVANSPORT_TTYS1_PORT + SYNO_EVANSPORT_TXR);
+#endif
+	while(1) {
+		outb(0x4, 0xcf9);
+		udelay(50);
+	}
+#else
 	if (pm_power_off) {
 		if (!reboot_force)
 			machine_shutdown();
@@ -707,6 +728,7 @@ static void native_machine_power_off(void)
 	}
 	/* a fallback in case there is no PM info available */
 	tboot_shutdown(TB_SHUTDOWN_HALT);
+#endif
 }
 
 struct machine_ops machine_ops = {

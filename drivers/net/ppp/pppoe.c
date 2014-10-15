@@ -77,8 +77,15 @@
 #include <linux/file.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
+#if defined(CONFIG_SYNO_ARMADA)
+#include <linux/if_arp.h>
+#endif
 
 #include <linux/nsproxy.h>
+#if defined(CONFIG_SYNO_ARMADA)
+#include <linux/mv_nfp.h>
+#endif
+
 #include <net/net_namespace.h>
 #include <net/netns/generic.h>
 #include <net/sock.h>
@@ -348,6 +355,41 @@ static int pppoe_device_event(struct notifier_block *this,
 
 	/* Only look at sockets that are using this specific device. */
 	switch (event) {
+#if defined(CONFIG_SYNO_ARMADA)
+#if defined(CONFIG_MV_ETH_NFP_HOOKS)
+	case NETDEV_UP: {
+		struct net_device *ppp_netdev;
+		struct pppoe_net *pn;
+		int i;
+
+		if (!(dev->type == ARPHRD_PPP))
+			break;
+
+		pn = pppoe_pernet(&init_net);
+		write_lock_bh(&pn->hash_lock);
+		for (i = 0; i < PPPOE_HASH_SIZE; i++) {
+			struct pppox_sock *po = pn->hash_table[i];
+
+			while (po) {
+				if ((ppp_dev_name(&po->chan) != NULL)
+					&& (!strcmp(ppp_dev_name(&po->chan), dev->name))) {
+					ppp_netdev = dev_get_by_name(&init_net, ppp_dev_name(&po->chan));
+					if (nfp_mgr_p->nfp_hook_ppp_add)
+						nfp_mgr_p->nfp_hook_ppp_add(ppp_netdev->ifindex,
+									po->pppoe_dev->ifindex, po->pppoe_pa.sid,
+									po->pppoe_pa.remote);
+					dev_put(ppp_netdev);
+					break;
+				}
+				po = po->next;
+			}
+		}
+		write_unlock_bh(&pn->hash_lock);
+	}
+	break;
+#endif /* CONFIG_MV_ETH_NFP_HOOKS */
+#endif
+
 	case NETDEV_CHANGEADDR:
 	case NETDEV_CHANGEMTU:
 		/* A change in mtu or address is a bad thing, requiring
@@ -580,6 +622,21 @@ static int pppoe_release(struct socket *sock)
 		dev_put(po->pppoe_dev);
 		po->pppoe_dev = NULL;
 	}
+#if defined(CONFIG_SYNO_ARMADA)
+#if defined(CONFIG_MV_ETH_NFP_HOOKS)
+	if (ppp_dev_name(&po->chan)) {
+		struct net_device *ppp_netdev = NULL;
+		int ppp_netdev_ifindex = 0;
+
+		ppp_netdev = dev_get_by_name(&init_net, ppp_dev_name(&po->chan));
+		ppp_netdev_ifindex = ppp_netdev->ifindex;
+		dev_put(ppp_netdev);
+		if (nfp_mgr_p->nfp_hook_ppp_del)
+			nfp_mgr_p->nfp_hook_ppp_del(ppp_netdev_ifindex);
+	}
+
+#endif
+#endif
 
 	pppox_unbind_sock(sk);
 
@@ -856,15 +913,24 @@ static int pppoe_sendmsg(struct kiocb *iocb, struct socket *sock,
 		goto end;
 
 
+#if defined(CONFIG_SYNO_COMCERTO)
+	skb = sock_wmalloc(sk, total_len + dev->hard_header_len + 32 + NET_SKB_PAD,
+			   0, GFP_KERNEL);
+#else
 	skb = sock_wmalloc(sk, total_len + dev->hard_header_len + 32,
 			   0, GFP_KERNEL);
+#endif
 	if (!skb) {
 		error = -ENOMEM;
 		goto end;
 	}
 
 	/* Reserve space for headers. */
+#if defined(CONFIG_SYNO_COMCERTO)
+	skb_reserve(skb, dev->hard_header_len + NET_SKB_PAD);
+#else
 	skb_reserve(skb, dev->hard_header_len);
+#endif
 	skb_reset_network_header(skb);
 
 	skb->dev = dev;
@@ -940,7 +1006,15 @@ static int __pppoe_xmit(struct sock *sk, struct sk_buff *skb)
 
 	skb->protocol = cpu_to_be16(ETH_P_PPP_SES);
 	skb->dev = dev;
+#if defined(CONFIG_SYNO_COMCERTO) && (defined(CONFIG_INET_IPSEC_OFFLOAD) || defined(CONFIG_INET6_IPSEC_OFFLOAD))
+	if((skb->ipsec_offload == 1) && (!skb->sp))
+	{
+		  dev_hard_header(skb, dev, ETH_P_PPP_SES,
+			 dev->dev_addr, po->pppoe_pa.remote, data_len);
 
+	}
+	else
+#endif
 	dev_hard_header(skb, dev, ETH_P_PPP_SES,
 			po->pppoe_pa.remote, NULL, data_len);
 
@@ -1004,17 +1078,33 @@ static int pppoe_seq_show(struct seq_file *seq, void *v)
 {
 	struct pppox_sock *po;
 	char *dev_name;
+#if defined(CONFIG_SYNO_COMCERTO) && defined(CONFIG_COMCERTO_FP)
+	char *ppp_name;
+#endif
 
 	if (v == SEQ_START_TOKEN) {
+#if defined(CONFIG_SYNO_COMCERTO) && defined(CONFIG_COMCERTO_FP)
+		seq_puts(seq, "Id       Address              Device  PPPDevice\n");
+#else
 		seq_puts(seq, "Id       Address              Device\n");
+#endif
 		goto out;
 	}
 
 	po = v;
 	dev_name = po->pppoe_pa.dev;
 
+#if defined(CONFIG_SYNO_COMCERTO) && defined(CONFIG_COMCERTO_FP)
+	ppp_name = ppp_dev_name(&po->chan);
+	if (!ppp_name)
+		goto out;
+
+	seq_printf(seq, "%04X %pM %8s       %s\n",
+		ntohs(po->pppoe_pa.sid), po->pppoe_pa.remote, dev_name, ppp_name);
+#else
 	seq_printf(seq, "%08X %pM %8s\n",
 		po->pppoe_pa.sid, po->pppoe_pa.remote, dev_name);
+#endif
 out:
 	return 0;
 }
@@ -1130,6 +1220,43 @@ static const struct pppox_proto pppoe_proto = {
 	.ioctl	= pppoe_ioctl,
 	.owner	= THIS_MODULE,
 };
+
+#if defined(CONFIG_SYNO_ARMADA)
+#if defined(CONFIG_MV_ETH_NFP_HOOKS)
+void nfp_ppp_sync(void)
+{
+	int i;
+	struct pppoe_net *pn = pppoe_pernet(&init_net);
+	struct net_device *ppp_netdev = NULL;
+	struct pppox_sock *po = NULL;
+
+	rtnl_lock();
+
+	write_lock_bh(&pn->hash_lock);
+	for (i = 0; i < PPPOE_HASH_SIZE; i++) {
+		po = pn->hash_table[i];
+
+		while (po) {
+			if (ppp_dev_name(&po->chan) != NULL) {
+				ppp_netdev = dev_get_by_name(&init_net, ppp_dev_name(&po->chan));
+				if (nfp_mgr_p->nfp_hook_ppp_add)
+					nfp_mgr_p->nfp_hook_ppp_add(ppp_netdev->ifindex,
+							po->pppoe_dev->ifindex,
+							po->pppoe_pa.sid,
+							po->pppoe_pa.remote);
+				dev_put(ppp_netdev);
+				}
+			po = po->next;
+		}
+	}
+	write_unlock_bh(&pn->hash_lock);
+
+	rtnl_unlock();
+}
+EXPORT_SYMBOL(nfp_ppp_sync);
+
+#endif /* CONFIG_MV_ETH_NFP_HOOKS */
+#endif
 
 static __net_init int pppoe_init_net(struct net *net)
 {

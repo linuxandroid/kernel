@@ -513,6 +513,14 @@ struct ext4_new_group_data {
 	__u32 free_blocks_count;
 };
 
+/* Indexes used to index group tables in ext4_new_group_data */
+enum {
+	BLOCK_BITMAP = 0,	/* block bitmap */
+	INODE_BITMAP,		/* inode bitmap */
+	INODE_TABLE,		/* inode tables */
+	GROUP_TABLE_COUNT,
+};
+
 /*
  * Flags used by ext4_map_blocks()
  */
@@ -577,6 +585,7 @@ struct ext4_new_group_data {
  /* note ioctl 11 reserved for filesystem-independent FIEMAP ioctl */
 #define EXT4_IOC_ALLOC_DA_BLKS		_IO('f', 12)
 #define EXT4_IOC_MOVE_EXT		_IOWR('f', 15, struct move_extent)
+#define EXT4_IOC_RESIZE_FS		_IOW('f', 16, __u64)
 
 #if defined(__KERNEL__) && defined(CONFIG_COMPAT)
 /*
@@ -769,6 +778,10 @@ do {									       \
 
 #endif /* defined(__KERNEL__) || defined(__linux__) */
 
+#ifdef MY_ABC_HERE
+#define ext4_mode2			i_pad1
+#endif
+
 /*
  * storage for cached extent
  * If ec_len == 0, then the cache is invalid.
@@ -911,6 +924,9 @@ struct ext4_inode_info {
 /*
  * Mount flags
  */
+#ifdef MY_ABC_HERE
+#define EXT4_MOUNT_OLDALLOC		0x00002  /* Don't use the new Orlov allocator */
+#endif
 #define EXT4_MOUNT_GRPID		0x00004	/* Create files with directory's group */
 #define EXT4_MOUNT_DEBUG		0x00008	/* Some debugging messages */
 #define EXT4_MOUNT_ERRORS_CONT		0x00010	/* Continue on errors */
@@ -959,12 +975,13 @@ struct ext4_inode_info {
 #define test_opt2(sb, opt)		(EXT4_SB(sb)->s_mount_opt2 & \
 					 EXT4_MOUNT2_##opt)
 
-#define ext4_set_bit			__test_and_set_bit_le
+#define ext4_test_and_set_bit		__test_and_set_bit_le
+#define ext4_set_bit			__set_bit_le
 #define ext4_set_bit_atomic		ext2_set_bit_atomic
-#define ext4_clear_bit			__test_and_clear_bit_le
+#define ext4_test_and_clear_bit		__test_and_clear_bit_le
+#define ext4_clear_bit			__clear_bit_le
 #define ext4_clear_bit_atomic		ext2_clear_bit_atomic
 #define ext4_test_bit			test_bit_le
-#define ext4_find_first_zero_bit	find_first_zero_bit_le
 #define ext4_find_next_zero_bit		find_next_zero_bit_le
 #define ext4_find_next_bit		find_next_bit_le
 
@@ -1093,10 +1110,21 @@ struct ext4_super_block {
 	__u8	s_last_error_func[32];	/* function where the error happened */
 #define EXT4_S_ERR_END offsetof(struct ext4_super_block, s_mount_opts)
 	__u8	s_mount_opts[64];
+#ifdef MY_ABC_HERE
+	__le32	s_archive_version1;	/* FIXME : SHOULD BE REMOVED AFTER DSM 5.0*/
+#else
 	__le32	s_usr_quota_inum;	/* inode for tracking user quota */
+#endif
 	__le32	s_grp_quota_inum;	/* inode for tracking group quota */
 	__le32	s_overhead_clusters;	/* overhead blocks/clusters in fs */
-	__le32  s_reserved[109];        /* Padding to the end of the block */
+#if defined(MY_ABC_HERE) || defined(MY_ABC_HERE)
+	__le32  s_reserved[106];        /* Padding to the end of the block */
+	__le32  s_archive_version;      /* Last archived version */
+	__le32  s_archive_version_obsoleted;
+	__le32  s_syno_hash_magic;      /* Enable Htree if the magic is given */
+#else
+	__le32	s_reserved[109];        /* Padding to the end of the block */
+#endif
 };
 
 #define EXT4_S_ERR_LEN (EXT4_S_ERR_END - EXT4_S_ERR_START)
@@ -1230,6 +1258,13 @@ struct ext4_sb_info {
 
 	unsigned int s_log_groups_per_flex;
 	struct flex_groups *s_flex_groups;
+#ifdef MY_ABC_HERE
+	int s_new_error_fs_event_flag;
+	char *s_mount_path;
+#endif
+#ifdef MY_DEF_HERE
+	int s_swap_create_time;
+#endif
 
 	/* workqueue for dio unwritten */
 	struct workqueue_struct *dio_unwritten_wq;
@@ -1395,6 +1430,7 @@ static inline void ext4_clear_state_flags(struct ext4_inode_info *ei)
 #define EXT4_FEATURE_RO_COMPAT_EXTRA_ISIZE	0x0040
 #define EXT4_FEATURE_RO_COMPAT_QUOTA		0x0100
 #define EXT4_FEATURE_RO_COMPAT_BIGALLOC		0x0200
+#define EXT4_FEATURE_RO_COMPAT_METADATA_CSUM	0x0400
 
 #define EXT4_FEATURE_INCOMPAT_COMPRESSION	0x0001
 #define EXT4_FEATURE_INCOMPAT_FILETYPE		0x0002
@@ -1407,6 +1443,8 @@ static inline void ext4_clear_state_flags(struct ext4_inode_info *ei)
 #define EXT4_FEATURE_INCOMPAT_FLEX_BG		0x0200
 #define EXT4_FEATURE_INCOMPAT_EA_INODE		0x0400 /* EA in inode */
 #define EXT4_FEATURE_INCOMPAT_DIRDATA		0x1000 /* data in dirent */
+#define EXT4_FEATURE_INCOMPAT_INLINEDATA	0x2000 /* data in inode */
+#define EXT4_FEATURE_INCOMPAT_LARGEDIR		0x4000 /* >2GB or 3-lvl htree */
 
 #define EXT2_FEATURE_COMPAT_SUPP	EXT4_FEATURE_COMPAT_EXT_ATTR
 #define EXT2_FEATURE_INCOMPAT_SUPP	(EXT4_FEATURE_INCOMPAT_FILETYPE| \
@@ -1570,10 +1608,17 @@ static inline __le16 ext4_rec_len_to_disk(unsigned len, unsigned blocksize)
  * Hash Tree Directory indexing
  * (c) Daniel Phillips, 2001
  */
-
+#ifdef MY_ABC_HERE
+#define SYNO_HASH_MAGIC	0x01856E96      // 25521814
+#define is_dx(dir) ((EXT4_SB(dir->i_sb)->s_es->s_syno_hash_magic == cpu_to_le32(SYNO_HASH_MAGIC)) && \
+					!(EXT4_HAS_COMPAT_FEATURE(dir->i_sb, \
+						EXT4_FEATURE_COMPAT_DIR_INDEX)) && \
+					(EXT4_I(dir)->i_flags & EXT4_INDEX_FL))
+#else
 #define is_dx(dir) (EXT4_HAS_COMPAT_FEATURE(dir->i_sb, \
 				      EXT4_FEATURE_COMPAT_DIR_INDEX) && \
 		    ext4_test_inode_flag((dir), EXT4_INODE_INDEX))
+#endif
 #define EXT4_DIR_LINK_MAX(dir) (!is_dx(dir) && (dir)->i_nlink >= EXT4_LINK_MAX)
 #define EXT4_DIR_LINK_EMPTY(dir) ((dir)->i_nlink == 2 || (dir)->i_nlink == 1)
 
@@ -1654,7 +1699,11 @@ void ext4_get_group_no_and_offset(struct super_block *sb, ext4_fsblk_t blocknr,
 /*
  * Timeout and state flag for lazy initialization inode thread.
  */
+#ifdef MY_ABC_HERE
+#define EXT4_DEF_LI_WAIT_MULT			2
+#else
 #define EXT4_DEF_LI_WAIT_MULT			10
+#endif
 #define EXT4_DEF_LI_MAX_START_DELAY		5
 #define EXT4_LAZYINIT_QUIT			0x0001
 #define EXT4_LAZYINIT_RUNNING			0x0002
@@ -1788,8 +1837,6 @@ extern void ext4_init_block_bitmap(struct super_block *sb,
 extern unsigned ext4_free_clusters_after_init(struct super_block *sb,
 					      ext4_group_t block_group,
 					      struct ext4_group_desc *gdp);
-extern unsigned ext4_num_base_meta_clusters(struct super_block *sb,
-					    ext4_group_t block_group);
 extern unsigned ext4_num_overhead_clusters(struct super_block *sb,
 					   ext4_group_t block_group,
 					   struct ext4_group_desc *gdp);
@@ -1817,7 +1864,7 @@ extern int ext4fs_dirhash(const char *name, int len, struct
 			  dx_hash_info *hinfo);
 
 /* ialloc.c */
-extern struct inode *ext4_new_inode(handle_t *, struct inode *, int,
+extern struct inode *ext4_new_inode(handle_t *, struct inode *, umode_t,
 				    const struct qstr *qstr, __u32 goal,
 				    uid_t *owner);
 extern void ext4_free_inode(handle_t *, struct inode *);
@@ -1878,20 +1925,20 @@ extern int ext4_alloc_da_blocks(struct inode *inode);
 extern void ext4_set_aops(struct inode *inode);
 extern int ext4_writepage_trans_blocks(struct inode *);
 extern int ext4_chunk_trans_blocks(struct inode *, int nrblocks);
-extern int ext4_block_truncate_page(handle_t *handle,
-		struct address_space *mapping, loff_t from);
-extern int ext4_block_zero_page_range(handle_t *handle,
-		struct address_space *mapping, loff_t from, loff_t length);
 extern int ext4_discard_partial_page_buffers(handle_t *handle,
 		struct address_space *mapping, loff_t from,
-		loff_t length, int flags);
-extern int ext4_discard_partial_page_buffers_no_lock(handle_t *handle,
-		struct inode *inode, struct page *page, loff_t from,
 		loff_t length, int flags);
 extern int ext4_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf);
 extern qsize_t *ext4_get_reserved_space(struct inode *inode);
 extern void ext4_da_update_reserve_space(struct inode *inode,
 					int used, int quota_claim);
+#ifdef MY_ABC_HERE
+extern int syno_ext4_getattr(struct dentry *d, struct kstat *stat, int flags);
+#endif
+#ifdef MY_ABC_HERE
+extern int syno_ext4_get_archive_ver(struct dentry *d, u32 *);
+extern int syno_ext4_set_archive_ver(struct dentry *d, u32);
+#endif
 
 /* indirect.c */
 extern int ext4_ind_map_blocks(handle_t *handle, struct inode *inode,
@@ -1922,6 +1969,7 @@ extern int ext4_group_add(struct super_block *sb,
 extern int ext4_group_extend(struct super_block *sb,
 				struct ext4_super_block *es,
 				ext4_fsblk_t n_blocks_count);
+extern int ext4_resize_fs(struct super_block *sb, ext4_fsblk_t n_blocks_count);
 
 /* super.c */
 extern int ext4_calculate_overhead(struct super_block *sb);

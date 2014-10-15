@@ -348,6 +348,12 @@ menuconfig SCSI_LOWLEVEL
 
 if SCSI_LOWLEVEL && SCSI
 
+config SCSI_MV_THOR
+        tristate "Marvell Storage Controller 6121/6122/6141/6145"
+        depends on SCSI && BLK_DEV_SD
+        help
+                Provides support for Marvell thor Storage Controller series.
+
 config ISCSI_TCP
 	tristate "iSCSI Initiator over TCP/IP"
 	depends on SCSI && INET
@@ -1901,6 +1907,14 @@ config SCSI_BFA_FC
 
 	  To compile this driver as a module, choose M here. The module will
 	  be called bfa.
+
+config SCSI_VIRTIO
+	tristate "virtio-scsi support (EXPERIMENTAL)"
+	depends on EXPERIMENTAL && VIRTIO
+	help
+          This is the virtual HBA driver for virtio.  If the kernel will
+          be used in a virtual machine, say Y or M.
+
 
 endif # SCSI_LOWLEVEL
 

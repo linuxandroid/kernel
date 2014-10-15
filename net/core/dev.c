@@ -140,11 +140,103 @@
 
 #include "net-sysfs.h"
 
+#if defined(MY_ABC_HERE) && defined(MY_ABC_HERE)
+#include <linux/synobios.h>
+extern char gszSynoHWVersion[16];
+#include <linux/pci.h>
+extern unsigned int gSwitchDev;
+extern char gDevPCIName[SYNO_MAX_SWITCHABLE_NET_DEVICE][SYNO_NET_DEVICE_ENCODING_LENGTH];
+#endif
+
+#ifdef MY_ABC_HERE
+void (*funcSynoNicLedCtrl)(int iEnable) = NULL;
+EXPORT_SYMBOL(funcSynoNicLedCtrl);
+#endif
+
+#if defined(CONFIG_SYNO_ARMADA)
+#if defined(CONFIG_MV_ETH_NFP)
+#include <linux/mv_nfp.h>
+#endif /* CONFIG_MV_ETH_NFP */
+#endif
+
 /* Instead of increasing this, you should create a hash table. */
 #define MAX_GRO_SKBS 8
 
 /* This should be increased if a protocol with a bigger head is added. */
 #define GRO_MAX_HEAD (MAX_HEADER + 128)
+
+#ifdef MY_ABC_HERE
+static unsigned int str_to_hex( char ch )
+{
+	if( (ch >= '0') && (ch <= '9') )
+		return( ch - '0' );
+
+	if( (ch >= 'a') && (ch <= 'f') )
+		return( ch - 'a' + 10 );
+
+	if( (ch >= 'A') && (ch <= 'F') )
+		return( ch - 'A' + 10 );
+
+	return 0;
+}
+
+void convert_str_to_mac( char *source , char *dest )
+{
+	dest[0] = (str_to_hex( source[0] ) << 4) + str_to_hex( source[1] );
+	dest[1] = (str_to_hex( source[2] ) << 4) + str_to_hex( source[3] );
+	dest[2] = (str_to_hex( source[4] ) << 4) + str_to_hex( source[5] );
+	dest[3] = (str_to_hex( source[6] ) << 4) + str_to_hex( source[7] );
+	dest[4] = (str_to_hex( source[8] ) << 4) + str_to_hex( source[9] );
+	dest[5] = (str_to_hex( source[10] ) << 4) + str_to_hex( source[11] );
+}
+
+#define SYNO_VENDOR_MAC_SUCCESS     0
+#define SYNO_VENDOR_MAC_EMPTY       1
+#define SYNO_VENDOR_MAC_FAIL        2
+int syno_get_dev_vendor_mac(const char *szDev, char *szMac)
+{
+	extern unsigned char grgbLanMac[4][16];
+	int err = SYNO_VENDOR_MAC_FAIL;
+
+	if (!szMac || !szDev)
+		goto ERR;
+
+	// According to function __dev_get_by_name
+	// we can use strncmp & IFNAMSIZ to replace memcmp to avoid #48870
+	if (!strncmp(szDev, "eth0", IFNAMSIZ)) {
+		if (!strcmp(grgbLanMac[0], "")) {
+			err = SYNO_VENDOR_MAC_EMPTY;
+			goto ERR;
+		}
+		convert_str_to_mac(grgbLanMac[0], szMac);
+	} else if (!strncmp(szDev, "eth1", IFNAMSIZ)) {
+		if (!strcmp(grgbLanMac[1], "")) {
+			err = SYNO_VENDOR_MAC_EMPTY;
+			goto ERR;
+		}
+		convert_str_to_mac(grgbLanMac[1], szMac);
+	} else if (!strncmp(szDev, "eth2", IFNAMSIZ)) {
+		if (!strcmp(grgbLanMac[2], "")) {
+			err = SYNO_VENDOR_MAC_EMPTY;
+			goto ERR;
+		}
+		convert_str_to_mac(grgbLanMac[2], szMac);
+	} else if (!strncmp(szDev, "eth3", IFNAMSIZ)) {
+		if (!strcmp(grgbLanMac[3], "")) {
+			err = SYNO_VENDOR_MAC_EMPTY;
+			goto ERR;
+		}
+		convert_str_to_mac(grgbLanMac[3], szMac);
+	} else {
+		goto ERR;
+	}
+
+	err = SYNO_VENDOR_MAC_SUCCESS;
+ERR:
+	return err;
+}
+EXPORT_SYMBOL(syno_get_dev_vendor_mac);
+#endif
 
 /*
  *	The list of packet types we will receive (as opposed to discard)
@@ -3217,6 +3309,25 @@ void netdev_rx_handler_unregister(struct net_device *dev)
 }
 EXPORT_SYMBOL_GPL(netdev_rx_handler_unregister);
 
+#if defined(CONFIG_SYNO_ARMADA)
+#ifdef CONFIG_MV_ETH_NFP_EXT
+static struct sk_buff *handle_nfp_extrcv(struct sk_buff *skb, struct net_device *dev)
+{
+		MV_EXT_PKT_INFO *pktInfo;
+
+		pktInfo = (MV_EXT_PKT_INFO *)&skb->cb;
+		if (pktInfo->flags == 0)
+			pktInfo = NULL;
+
+	if (!mv_eth_nfp_ext(skb->dev, skb, pktInfo)) {
+		/* packet processed by NFP */
+			return NULL;
+	}
+	return skb;
+}
+#endif /* CONFIG_MV_ETH_NFP_EXT */
+#endif
+
 static int __netif_receive_skb(struct sk_buff *skb)
 {
 	struct packet_type *ptype, *pt_prev;
@@ -3263,6 +3374,14 @@ another_round:
 		skb->tc_verd = CLR_TC_NCLS(skb->tc_verd);
 		goto ncls;
 	}
+#endif
+
+#if defined(CONFIG_SYNO_ARMADA)
+#ifdef CONFIG_MV_ETH_NFP_EXT
+	skb = handle_nfp_extrcv(skb, orig_dev);
+	if (!skb)
+		goto out;
+#endif /* CONFIG_MV_ETH_NFP_EXT */
 #endif
 
 	list_for_each_entry_rcu(ptype, &ptype_all, list) {
@@ -5574,7 +5693,10 @@ int register_netdevice(struct net_device *dev)
 {
 	int ret;
 	struct net *net = dev_net(dev);
-
+#if defined(MY_ABC_HERE) && defined(MY_ABC_HERE)
+	// we assume internal lans are comming up before extension lans
+    static int netdevCnt = 0;
+#endif
 	BUG_ON(dev_boot_phase);
 	ASSERT_RTNL();
 
@@ -5592,6 +5714,11 @@ int register_netdevice(struct net_device *dev)
 	ret = dev_get_valid_name(dev, dev->name);
 	if (ret < 0)
 		goto out;
+#if defined(MY_ABC_HERE) && defined(MY_ABC_HERE)
+	if (gSwitchDev > 0 && netdevCnt < gSwitchDev && !strncmp("eth", dev->name, 3)) {
+		snprintf(dev->name, sizeof(dev->name), "eth%c", gDevPCIName[netdevCnt++][0]);
+	}
+#endif
 
 	/* Init, if this function is available */
 	if (dev->netdev_ops->ndo_init) {
@@ -5925,7 +6052,10 @@ struct rtnl_link_stats64 *dev_get_stats(struct net_device *dev,
 	} else {
 		netdev_stats_to_stats64(storage, &dev->stats);
 	}
+
+#ifndef MY_ABC_HERE
 	storage->rx_dropped += atomic_long_read(&dev->rx_dropped);
+#endif
 	return storage;
 }
 EXPORT_SYMBOL(dev_get_stats);
@@ -6652,6 +6782,17 @@ static int __init net_dev_init(void)
 	dst_init();
 	dev_mcast_init();
 	rc = 0;
+
+#if defined(CONFIG_SYNO_ARMADA)
+#if defined(CONFIG_MV_ETH_NFP)
+	nfp_core_ops_init();
+#endif /* CONFIG_MV_ETH_NFP */
+
+#if defined(CONFIG_MV_ETH_NFP_HOOKS)
+	nfp_hook_ops_init();
+#endif /* CONFIG_MV_ETH_NFP_HOOKS */
+#endif
+
 out:
 	return rc;
 }

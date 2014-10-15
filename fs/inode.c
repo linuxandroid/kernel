@@ -26,6 +26,7 @@
 #include <linux/ima.h>
 #include <linux/cred.h>
 #include <linux/buffer_head.h> /* for inode_has_buffers */
+#include <linux/ratelimit.h>
 #include "internal.h"
 
 /*
@@ -58,6 +59,10 @@
  * iunique_lock
  *   inode_hash_lock
  */
+
+#ifdef CONFIG_FS_SYNO_ACL
+#include "synoacl_int.h"
+#endif
 
 static unsigned int i_hash_mask __read_mostly;
 static unsigned int i_hash_shift __read_mostly;
@@ -160,6 +165,16 @@ int inode_init_always(struct super_block *sb, struct inode *inode)
 	inode->i_rdev = 0;
 	inode->dirtied_when = 0;
 
+#ifdef MY_ABC_HERE
+	inode->i_archive_version = 0;
+#endif
+#ifdef MY_ABC_HERE
+	inode->i_mode2 = 0;   /* set archive bit on creation */
+#endif
+#ifdef MY_ABC_HERE
+	inode->i_CreateTime.tv_sec = 0;
+	inode->i_CreateTime.tv_nsec = 0;
+#endif
 	if (security_inode_alloc(inode))
 		goto out;
 	spin_lock_init(&inode->i_lock);
@@ -167,6 +182,10 @@ int inode_init_always(struct super_block *sb, struct inode *inode)
 
 	mutex_init(&inode->i_mutex);
 	lockdep_set_class(&inode->i_mutex, &sb->s_type->i_mutex_key);
+#if defined(MY_ABC_HERE) || defined(MY_ABC_HERE)
+	mutex_init(&inode->i_syno_mutex);
+	lockdep_set_class(&inode->i_syno_mutex, &sb->s_type->i_syno_mutex_key);
+#endif
 
 	atomic_set(&inode->i_dio_count, 0);
 
@@ -191,7 +210,10 @@ int inode_init_always(struct super_block *sb, struct inode *inode)
 	}
 	inode->i_private = NULL;
 	inode->i_mapping = mapping;
-#ifdef CONFIG_FS_POSIX_ACL
+	INIT_LIST_HEAD(&inode->i_dentry);	/* buggered by rcu freeing */
+#ifdef CONFIG_FS_SYNO_ACL
+	inode->i_syno_acl = ACL_NOT_CACHED;
+#elif defined(CONFIG_FS_POSIX_ACL)
 	inode->i_acl = inode->i_default_acl = ACL_NOT_CACHED;
 #endif
 
@@ -241,7 +263,15 @@ void __destroy_inode(struct inode *inode)
 	BUG_ON(inode_has_buffers(inode));
 	security_inode_free(inode);
 	fsnotify_inode_delete(inode);
-#ifdef CONFIG_FS_POSIX_ACL
+	if (!inode->i_nlink) {
+		WARN_ON(atomic_long_read(&inode->i_sb->s_remove_count) == 0);
+		atomic_long_dec(&inode->i_sb->s_remove_count);
+	}
+
+#ifdef CONFIG_FS_SYNO_ACL
+	if (inode->i_syno_acl && inode->i_syno_acl != ACL_NOT_CACHED)
+		syno_acl_release(inode->i_syno_acl);
+#elif defined(CONFIG_FS_POSIX_ACL)
 	if (inode->i_acl && inode->i_acl != ACL_NOT_CACHED)
 		posix_acl_release(inode->i_acl);
 	if (inode->i_default_acl && inode->i_default_acl != ACL_NOT_CACHED)
@@ -254,7 +284,6 @@ EXPORT_SYMBOL(__destroy_inode);
 static void i_callback(struct rcu_head *head)
 {
 	struct inode *inode = container_of(head, struct inode, i_rcu);
-	INIT_LIST_HEAD(&inode->i_dentry);
 	kmem_cache_free(inode_cachep, inode);
 }
 
@@ -267,6 +296,82 @@ static void destroy_inode(struct inode *inode)
 	else
 		call_rcu(&inode->i_rcu, i_callback);
 }
+
+/**
+ * drop_nlink - directly drop an inode's link count
+ * @inode: inode
+ *
+ * This is a low-level filesystem helper to replace any
+ * direct filesystem manipulation of i_nlink.  In cases
+ * where we are attempting to track writes to the
+ * filesystem, a decrement to zero means an imminent
+ * write when the file is truncated and actually unlinked
+ * on the filesystem.
+ */
+void drop_nlink(struct inode *inode)
+{
+	WARN_ON(inode->i_nlink == 0);
+	inode->__i_nlink--;
+	if (!inode->i_nlink)
+		atomic_long_inc(&inode->i_sb->s_remove_count);
+}
+EXPORT_SYMBOL(drop_nlink);
+
+/**
+ * clear_nlink - directly zero an inode's link count
+ * @inode: inode
+ *
+ * This is a low-level filesystem helper to replace any
+ * direct filesystem manipulation of i_nlink.  See
+ * drop_nlink() for why we care about i_nlink hitting zero.
+ */
+void clear_nlink(struct inode *inode)
+{
+	if (inode->i_nlink) {
+		inode->__i_nlink = 0;
+		atomic_long_inc(&inode->i_sb->s_remove_count);
+	}
+}
+EXPORT_SYMBOL(clear_nlink);
+
+/**
+ * set_nlink - directly set an inode's link count
+ * @inode: inode
+ * @nlink: new nlink (should be non-zero)
+ *
+ * This is a low-level filesystem helper to replace any
+ * direct filesystem manipulation of i_nlink.
+ */
+void set_nlink(struct inode *inode, unsigned int nlink)
+{
+	if (!nlink) {
+		clear_nlink(inode);
+	} else {
+		/* Yes, some filesystems do change nlink from zero to one */
+		if (inode->i_nlink == 0)
+			atomic_long_dec(&inode->i_sb->s_remove_count);
+
+		inode->__i_nlink = nlink;
+	}
+}
+EXPORT_SYMBOL(set_nlink);
+
+/**
+ * inc_nlink - directly increment an inode's link count
+ * @inode: inode
+ *
+ * This is a low-level filesystem helper to replace any
+ * direct filesystem manipulation of i_nlink.  Currently,
+ * it is only here for parity with dec_nlink().
+ */
+void inc_nlink(struct inode *inode)
+{
+	if (WARN_ON(inode->i_nlink == 0))
+		atomic_long_dec(&inode->i_sb->s_remove_count);
+
+	inode->__i_nlink++;
+}
+EXPORT_SYMBOL(inc_nlink);
 
 void address_space_init_once(struct address_space *mapping)
 {
@@ -290,7 +395,6 @@ void inode_init_once(struct inode *inode)
 {
 	memset(inode, 0, sizeof(*inode));
 	INIT_HLIST_NODE(&inode->i_hash);
-	INIT_LIST_HEAD(&inode->i_dentry);
 	INIT_LIST_HEAD(&inode->i_devices);
 	INIT_LIST_HEAD(&inode->i_wb_list);
 	INIT_LIST_HEAD(&inode->i_lru);
@@ -429,7 +533,6 @@ void end_writeback(struct inode *inode)
 	BUG_ON(!list_empty(&inode->i_data.private_list));
 	BUG_ON(!(inode->i_state & I_FREEING));
 	BUG_ON(inode->i_state & I_CLEAR);
-	inode_sync_wait(inode);
 	/* don't need i_lock here, no concurrent mods to i_state */
 	inode->i_state = I_FREEING | I_CLEAR;
 }
@@ -459,6 +562,8 @@ static void evict(struct inode *inode)
 		inode_wb_list_del(inode);
 
 	inode_sb_list_del(inode);
+
+	inode_sync_wait(inode);
 
 	if (op->evict_inode) {
 		op->evict_inode(inode);
@@ -881,7 +986,13 @@ void unlock_new_inode(struct inode *inode)
 {
 	lockdep_annotate_inode_mutex_key(inode);
 	spin_lock(&inode->i_lock);
+#ifdef MY_ABC_HERE
+	if (!(inode->i_state & I_NEW)) {
+		printk(KERN_ERR "EXT4: inode->i_state is not I_NEW. File system should be remount read-only.\n");
+	}
+#else
 	WARN_ON(!(inode->i_state & I_NEW));
+#endif
 	inode->i_state &= ~I_NEW;
 	wake_up_bit(&inode->i_state, __I_NEW);
 	spin_unlock(&inode->i_lock);
@@ -1418,6 +1529,27 @@ static int relatime_need_update(struct vfsmount *mnt, struct inode *inode,
 	return 0;
 }
 
+/*
+ * This does the actual work of updating an inodes time or version.  Must have
+ * had called mnt_want_write() before calling this.
+ */
+static int update_time(struct inode *inode, struct timespec *time, int flags)
+{
+	if (inode->i_op->update_time)
+		return inode->i_op->update_time(inode, time, flags);
+
+	if (flags & S_ATIME)
+		inode->i_atime = *time;
+	if (flags & S_VERSION)
+		inode_inc_iversion(inode);
+	if (flags & S_CTIME)
+		inode->i_ctime = *time;
+	if (flags & S_MTIME)
+		inode->i_mtime = *time;
+	mark_inode_dirty_sync(inode);
+	return 0;
+}
+
 /**
  *	touch_atime	-	update the access time
  *	@mnt: mount the inode is accessed on
@@ -1452,12 +1584,24 @@ void touch_atime(struct vfsmount *mnt, struct dentry *dentry)
 	if (timespec_equal(&inode->i_atime, &now))
 		return;
 
-	if (mnt_want_write(mnt))
+	if (!sb_start_write_trylock(inode->i_sb))
 		return;
 
-	inode->i_atime = now;
-	mark_inode_dirty_sync(inode);
-	mnt_drop_write(mnt);
+	if (__mnt_want_write(mnt))
+		goto skip_update;
+	/*
+	 * File systems can error out when updating inodes if they need to
+	 * allocate new space to modify an inode (such is the case for
+	 * Btrfs), but since we touch atime while walking down the path we
+	 * really don't care if we failed to update the atime of the file,
+	 * so just ignore the return value.
+	 * We may also fail on filesystems that have the ability to make parts
+	 * of the fs read only, e.g. subvolumes in Btrfs.
+	 */
+	update_time(inode, &now, S_ATIME);
+	__mnt_drop_write(mnt);
+skip_update:
+	sb_end_write(inode->i_sb);
 }
 EXPORT_SYMBOL(touch_atime);
 
@@ -1470,18 +1614,20 @@ EXPORT_SYMBOL(touch_atime);
  *	usage in the file write path of filesystems, and filesystems may
  *	choose to explicitly ignore update via this function with the
  *	S_NOCMTIME inode flag, e.g. for network filesystem where these
- *	timestamps are handled by the server.
+ *	timestamps are handled by the server.  This can return an error for
+ *	file systems who need to allocate space in order to update an inode.
  */
 
-void file_update_time(struct file *file)
+int file_update_time(struct file *file)
 {
 	struct inode *inode = file->f_path.dentry->d_inode;
 	struct timespec now;
-	enum { S_MTIME = 1, S_CTIME = 2, S_VERSION = 4 } sync_it = 0;
+	int sync_it = 0;
+	int ret;
 
 	/* First try to exhaust all avenues to not sync */
 	if (IS_NOCMTIME(inode))
-		return;
+		return 0;
 
 	now = current_fs_time(inode->i_sb);
 	if (!timespec_equal(&inode->i_mtime, &now))
@@ -1494,21 +1640,16 @@ void file_update_time(struct file *file)
 		sync_it |= S_VERSION;
 
 	if (!sync_it)
-		return;
+		return 0;
 
 	/* Finally allowed to write? Takes lock. */
-	if (mnt_want_write_file(file))
-		return;
+	if (__mnt_want_write_file(file))
+		return 0;
 
-	/* Only change inode inside the lock region */
-	if (sync_it & S_VERSION)
-		inode_inc_iversion(inode);
-	if (sync_it & S_CTIME)
-		inode->i_ctime = now;
-	if (sync_it & S_MTIME)
-		inode->i_mtime = now;
-	mark_inode_dirty_sync(inode);
-	mnt_drop_write(file->f_path.mnt);
+	ret = update_time(inode, &now, sync_it);
+	__mnt_drop_write_file(file);
+
+	return ret;
 }
 EXPORT_SYMBOL(file_update_time);
 

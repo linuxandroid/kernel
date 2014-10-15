@@ -11,6 +11,10 @@
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
 
+#ifdef CONFIG_FS_SYNO_ACL
+#include "synoacl_int.h"
+#endif
+
 #ifdef __ARCH_WANT_SYS_UTIME
 
 /*
@@ -38,6 +42,64 @@ SYSCALL_DEFINE2(utime, char __user *, filename, struct utimbuf __user *, times)
 	return do_utimes(AT_FDCWD, filename, times ? tv : NULL, 0);
 }
 
+#endif
+
+#ifdef MY_ABC_HERE
+/**
+ * sys_SYNOUtime() is used to update create time.
+ *
+ * @param	filename	The file to be changed create time.
+ * 			pCtime	Create time.
+ * @return	0	success
+ *			!0	error
+ */
+asmlinkage long sys_SYNOUtime(char * filename, struct timespec __user *pCtime)
+{
+	int error;
+	struct path path;
+	struct inode *inode = NULL;
+	struct timespec time;
+
+	if (!pCtime) {
+		return -EINVAL;
+	}
+	error = copy_from_user(&time, pCtime, sizeof(struct timespec));
+	if (error)
+		goto out;
+
+	error = user_path_at(AT_FDCWD, filename, LOOKUP_FOLLOW, &path);
+	if (error)
+		goto out;
+
+	error = mnt_want_write(path.mnt);
+	if (error)
+		goto dput_and_out;
+
+	inode = path.dentry->d_inode;
+	if (!inode_owner_or_capable(inode)) {
+#ifdef CONFIG_FS_SYNO_ACL
+		if (IS_SYNOACL(path.dentry)) {
+			error = synoacl_op_perm(path.dentry, MAY_WRITE_ATTR | MAY_WRITE_EXT_ATTR);
+			if (error)
+				goto drop_write;
+		} else {
+#endif
+		error = -EPERM;
+		goto drop_write;
+#ifdef CONFIG_FS_SYNO_ACL
+		}
+#endif
+	}
+
+	error = syno_op_set_crtime(path.dentry, &time);
+
+drop_write:
+	mnt_drop_write(path.mnt);
+dput_and_out:
+	path_put(&path);
+out:
+	return error;
+}
 #endif
 
 static bool nsec_valid(long nsec)
@@ -95,6 +157,14 @@ static int utimes_common(struct path *path, struct timespec *times)
                 if (IS_IMMUTABLE(inode))
 			goto mnt_drop_write_and_out;
 
+#ifdef CONFIG_FS_SYNO_ACL
+		if (IS_SYNOACL(path->dentry)) {
+			error = synoacl_op_perm(path->dentry, MAY_WRITE_ATTR | MAY_WRITE_EXT_ATTR);
+			if (error) {
+				goto mnt_drop_write_and_out;
+			}
+		} else
+#endif
 		if (!inode_owner_or_capable(inode)) {
 			error = inode_permission(inode, MAY_WRITE);
 			if (error)

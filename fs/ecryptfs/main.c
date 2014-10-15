@@ -562,7 +562,11 @@ static struct dentry *ecryptfs_mount(struct file_system_type *fs_type, int flags
 	 */
 	s->s_flags = flags & ~MS_POSIXACL;
 	s->s_flags |= path.dentry->d_sb->s_flags & (MS_RDONLY | MS_POSIXACL);
-
+#ifdef CONFIG_FS_SYNO_ACL
+	if (IS_FS_SYNOACL(path.dentry->d_inode)) {
+		s->s_flags |= MS_SYNOACL;
+	}
+#endif
 	s->s_maxbytes = path.dentry->d_sb->s_maxbytes;
 	s->s_blocksize = path.dentry->d_sb->s_blocksize;
 	s->s_magic = ECRYPTFS_SUPER_MAGIC;
@@ -715,6 +719,12 @@ static struct ecryptfs_cache_info {
 static void ecryptfs_free_kmem_caches(void)
 {
 	int i;
+
+	/*
+	 * Make sure all delayed rcu free inodes are flushed before we
+	 * destroy cache.
+	 */
+	rcu_barrier();
 
 	for (i = 0; i < ARRAY_SIZE(ecryptfs_cache_infos); i++) {
 		struct ecryptfs_cache_info *info;

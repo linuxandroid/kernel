@@ -131,6 +131,9 @@ cifs_fill_common_info(struct cifs_fattr *fattr, struct cifs_sb_info *cifs_sb)
 		fattr->cf_dtype = DT_REG;
 	}
 
+	/* non-unix readdir doesn't provide nlink */
+	fattr->cf_flags |= CIFS_FATTR_UNKNOWN_NLINK;
+
 	if (fattr->cf_cifsattrs & ATTR_READONLY)
 		fattr->cf_mode &= ~S_IWUGO;
 
@@ -165,6 +168,9 @@ cifs_dir_info_to_fattr(struct cifs_fattr *fattr, FILE_DIRECTORY_INFO *info,
 	fattr->cf_mtime = cifs_NTtimeToUnix(info->LastWriteTime);
 
 	cifs_fill_common_info(fattr, cifs_sb);
+#ifdef MY_ABC_HERE
+	fattr->cf_nlink = 1;
+#endif
 }
 
 static void

@@ -318,6 +318,11 @@ void usb_hcd_pci_remove(struct pci_dev *dev)
 }
 EXPORT_SYMBOL_GPL(usb_hcd_pci_remove);
 
+#ifdef MY_ABC_HERE
+#include <linux/kthread.h>
+extern struct task_struct *khubd_task;
+#endif
+
 /**
  * usb_hcd_pci_shutdown - shutdown host controller
  * @dev: USB Host Controller being shutdown
@@ -329,6 +334,24 @@ void usb_hcd_pci_shutdown(struct pci_dev *dev)
 	hcd = pci_get_drvdata(dev);
 	if (!hcd)
 		return;
+
+#ifdef MY_ABC_HERE
+	if (khubd_task != NULL) {
+		kthread_stop(khubd_task);
+		khubd_task = NULL;
+	}
+#endif
+
+#ifdef MY_ABC_HERE
+	if (hcd->irq >= 0) {
+		//disable_irq(hcd->irq);
+		free_irq(hcd->irq, hcd);
+		if (hcd->irq == dev->irq) {
+			dev->irq = -1;
+		}
+		hcd->irq = -1;
+	}
+#endif
 
 	if (test_bit(HCD_FLAG_HW_ACCESSIBLE, &hcd->flags) &&
 			hcd->driver->shutdown) {

@@ -45,11 +45,24 @@
 #include <linux/gfp.h>
 #include <scsi/scsi_host.h>
 #include <scsi/scsi_cmnd.h>
+#ifdef MY_ABC_HERE
+#include <scsi/scsi.h>
+#include <scsi/scsi_host.h>
+#include <scsi/scsi_cmnd.h>
+#include <scsi/scsi_eh.h>
+#include <scsi/scsi_device.h>
+#include <scsi/scsi_tcq.h>
+#include <scsi/scsi_transport.h>
+#endif
 #include <linux/libata.h>
 #include "ahci.h"
 
 #define DRV_NAME	"ahci"
 #define DRV_VERSION	"3.0"
+
+#ifdef MY_ABC_HERE
+extern long g_ahci_switch;
+#endif
 
 enum {
 	AHCI_PCI_BAR_STA2X11	= 0,
@@ -94,6 +107,39 @@ static struct scsi_host_template ahci_sht = {
 	AHCI_SHT("ahci"),
 };
 
+#ifdef SYNO_SATA_PM_DEVICE_GPIO
+static int
+sata_syno_ahci_defer_cmd(struct ata_queued_cmd *qc)
+{
+	struct ata_link *link = qc->dev->link;
+	struct ata_port *ap = link->ap;
+
+	if (ap->excl_link == NULL || ap->excl_link == link) {
+		if (ap->nr_active_links == 0 || ata_link_active(link)) {
+			qc->flags |= ATA_QCFLAG_CLEAR_EXCL;
+			return ata_std_qc_defer(qc);
+		}
+
+		ap->excl_link = link;
+	} else {
+		/* preempt when no any command in the queue*/
+		if (!ap->nr_active_links) {
+			ap->excl_link = link;
+			qc->flags |= ATA_QCFLAG_CLEAR_EXCL;
+			return ata_std_qc_defer(qc);
+		}
+	}
+
+	return ATA_DEFER_PORT;
+}
+
+static struct ata_port_operations ahci_pmp_ops = {
+	.inherits		= &ahci_ops,
+
+	.qc_defer		= sata_syno_ahci_defer_cmd,
+};
+#endif
+
 static struct ata_port_operations ahci_vt8251_ops = {
 	.inherits		= &ahci_ops,
 	.hardreset		= ahci_vt8251_hardreset,
@@ -129,7 +175,11 @@ static const struct ata_port_info ahci_port_info[] = {
 		.flags		= AHCI_FLAG_COMMON,
 		.pio_mask	= ATA_PIO4,
 		.udma_mask	= ATA_UDMA6,
+#ifdef SYNO_SATA_PM_DEVICE_GPIO
+		.port_ops	= &ahci_pmp_ops,
+#else
 		.port_ops	= &ahci_ops,
+#endif
 	},
 	[board_ahci_yes_fbs] =
 	{
@@ -262,6 +312,38 @@ static const struct pci_device_id ahci_pci_tbl[] = {
 	{ PCI_VDEVICE(INTEL, 0x1e06), board_ahci }, /* Panther Point RAID */
 	{ PCI_VDEVICE(INTEL, 0x1e07), board_ahci }, /* Panther Point RAID */
 	{ PCI_VDEVICE(INTEL, 0x1e0e), board_ahci }, /* Panther Point RAID */
+	{ PCI_VDEVICE(INTEL, 0x8c02), board_ahci }, /* Lynx Point AHCI */
+	{ PCI_VDEVICE(INTEL, 0x8c03), board_ahci }, /* Lynx Point AHCI */
+	{ PCI_VDEVICE(INTEL, 0x8c04), board_ahci }, /* Lynx Point RAID */
+	{ PCI_VDEVICE(INTEL, 0x8c05), board_ahci }, /* Lynx Point RAID */
+	{ PCI_VDEVICE(INTEL, 0x8c06), board_ahci }, /* Lynx Point RAID */
+	{ PCI_VDEVICE(INTEL, 0x8c07), board_ahci }, /* Lynx Point RAID */
+	{ PCI_VDEVICE(INTEL, 0x8c0e), board_ahci }, /* Lynx Point RAID */
+	{ PCI_VDEVICE(INTEL, 0x8c0f), board_ahci }, /* Lynx Point RAID */
+	{ PCI_VDEVICE(INTEL, 0x9c02), board_ahci }, /* Lynx Point-LP AHCI */
+	{ PCI_VDEVICE(INTEL, 0x9c03), board_ahci }, /* Lynx Point-LP AHCI */
+	{ PCI_VDEVICE(INTEL, 0x9c04), board_ahci }, /* Lynx Point-LP RAID */
+	{ PCI_VDEVICE(INTEL, 0x9c05), board_ahci }, /* Lynx Point-LP RAID */
+	{ PCI_VDEVICE(INTEL, 0x9c06), board_ahci }, /* Lynx Point-LP RAID */
+	{ PCI_VDEVICE(INTEL, 0x9c07), board_ahci }, /* Lynx Point-LP RAID */
+	{ PCI_VDEVICE(INTEL, 0x9c0e), board_ahci }, /* Lynx Point-LP RAID */
+	{ PCI_VDEVICE(INTEL, 0x9c0f), board_ahci }, /* Lynx Point-LP RAID */
+	{ PCI_VDEVICE(INTEL, 0x1f22), board_ahci }, /* Avoton AHCI */
+	{ PCI_VDEVICE(INTEL, 0x1f23), board_ahci }, /* Avoton AHCI */
+	{ PCI_VDEVICE(INTEL, 0x1f24), board_ahci }, /* Avoton RAID */
+	{ PCI_VDEVICE(INTEL, 0x1f25), board_ahci }, /* Avoton RAID */
+	{ PCI_VDEVICE(INTEL, 0x1f26), board_ahci }, /* Avoton RAID */
+	{ PCI_VDEVICE(INTEL, 0x1f27), board_ahci }, /* Avoton RAID */
+	{ PCI_VDEVICE(INTEL, 0x1f2e), board_ahci }, /* Avoton RAID */
+	{ PCI_VDEVICE(INTEL, 0x1f2f), board_ahci }, /* Avoton RAID */
+	{ PCI_VDEVICE(INTEL, 0x1f32), board_ahci }, /* Avoton AHCI */
+	{ PCI_VDEVICE(INTEL, 0x1f33), board_ahci }, /* Avoton AHCI */
+	{ PCI_VDEVICE(INTEL, 0x1f34), board_ahci }, /* Avoton RAID */
+	{ PCI_VDEVICE(INTEL, 0x1f35), board_ahci }, /* Avoton RAID */
+	{ PCI_VDEVICE(INTEL, 0x1f36), board_ahci }, /* Avoton RAID */
+	{ PCI_VDEVICE(INTEL, 0x1f37), board_ahci }, /* Avoton RAID */
+	{ PCI_VDEVICE(INTEL, 0x1f3e), board_ahci }, /* Avoton RAID */
+	{ PCI_VDEVICE(INTEL, 0x1f3f), board_ahci }, /* Avoton RAID */
 
 	/* JMicron 360/1/3/5/6, match class to avoid IDE function */
 	{ PCI_VENDOR_ID_JMICRON, PCI_ANY_ID, PCI_ANY_ID, PCI_ANY_ID,
@@ -383,6 +465,7 @@ static const struct pci_device_id ahci_pci_tbl[] = {
 	/* Marvell */
 	{ PCI_VDEVICE(MARVELL, 0x6145), board_ahci_mv },	/* 6145 */
 	{ PCI_VDEVICE(MARVELL, 0x6121), board_ahci_mv },	/* 6121 */
+	{ PCI_VDEVICE(MARVELL, 0x9125), board_ahci },		/* 9125 */
 	{ PCI_DEVICE(0x1b4b, 0x9123),
 	  .class = PCI_CLASS_STORAGE_SATA_AHCI,
 	  .class_mask = 0xffffff,
@@ -395,6 +478,10 @@ static const struct pci_device_id ahci_pci_tbl[] = {
 	  .driver_data = board_ahci_yes_fbs },			/* 88se9172 on some Gigabyte */
 	{ PCI_DEVICE(0x1b4b, 0x91a3),
 	  .driver_data = board_ahci_yes_fbs },
+#ifdef MY_ABC_HERE
+	{ PCI_DEVICE(0x1b4b, 0x9235),
+	  .driver_data = board_ahci_yes_fbs },			/* 88se9235 */
+#endif
 
 	/* Promise */
 	{ PCI_VDEVICE(PROMISE, 0x3f20), board_ahci },	/* PDC42819 */
@@ -415,12 +502,180 @@ static const struct pci_device_id ahci_pci_tbl[] = {
 	{ }	/* terminate list */
 };
 
+#ifdef MY_ABC_HERE
+
+/*
+ * 9235 gpio mmio address, to control 9235 GPIO, please read register manual section 1.6
+ */
+enum {
+	/* MV_9235_GPIO_DATA_OUT the actual address is 0x71020, the 0x07000000 is MBUS_ID for vendor specific register 1 */
+	MV_9235_GPIO_DATA_OUT				= 0x07071020,
+	MV_9235_GPIO_DATA_OUT_ENABLE		= 0x07071024,
+	MV_9235_GPIO_ACTIVE					= 0x07071058,
+	MV_9235_VENDOR_SPEC1_ADDR_OFFSET	= 0xA8,			/* To manipulate GPIO via Vendor specific register */
+	MV_9235_VENDOR_SPEC1_DATA_OFFSET	= 0xAC,
+};
+
+/*
+ *	Read value from 9235 gpio register
+ */
+u32 syno_mv_9235_gpio_reg_read(struct ata_host *host, const unsigned int gpioaddr)
+{
+	void __iomem *host_mmio = NULL;
+	u32 value = 0;
+
+	if(NULL == (host_mmio = ahci_host_base(host))) {
+		goto END;
+	}
+
+	// write to 9235 gpio active register address to VENDER_SPEC_ADDR1
+	writel(gpioaddr, host_mmio + MV_9235_VENDOR_SPEC1_ADDR_OFFSET);
+	// read original value from vendor specific data1
+	value = readl(host_mmio + MV_9235_VENDOR_SPEC1_DATA_OFFSET);
+END:
+	return value;
+}
+
+/*
+ *	9235 GPIO register set
+ */
+void syno_mv_9235_gpio_reg_set(struct ata_host *host, const unsigned int gpioaddr, u32 value)
+{
+	void __iomem *host_mmio = NULL;
+	u32 reg_val;
+
+	if(NULL == (host_mmio = ahci_host_base(host))) {
+		goto END;
+	}
+
+	// write to 9235 gpio active register address to VENDER_SPEC_ADDR1
+	writel(gpioaddr, host_mmio + MV_9235_VENDOR_SPEC1_ADDR_OFFSET);
+	// read original value from vendor specific data1
+	reg_val = readl(host_mmio + MV_9235_VENDOR_SPEC1_DATA_OFFSET);
+	// then write value to it
+	writel(value, host_mmio + MV_9235_VENDOR_SPEC1_DATA_OFFSET);
+END:
+	return;
+}
+
+/*
+ *	9235 GPIO init
+ */
+void syno_mv_9235_gpio_active_init(struct ata_host *host)
+{
+	// gpio enable is low active
+	syno_mv_9235_gpio_reg_set(host, MV_9235_GPIO_DATA_OUT_ENABLE, 0x0);
+	syno_mv_9235_gpio_reg_set(host, MV_9235_GPIO_DATA_OUT, 0x0);
+	// set the lower 4 GPIO as link/active to disk 1~4 and upper 4 GPIO as faulty to disk 1~4
+	syno_mv_9235_gpio_reg_set(host, MV_9235_GPIO_ACTIVE, 0x00B6D8D1);
+}
+
+int syno_mv_9235_disk_led_get(const unsigned short hostnum)
+{
+	struct Scsi_Host *shost = scsi_host_lookup(hostnum);
+	struct ata_port *ap = NULL;
+	int ret = -1;
+	u32 value;
+	int led_idx;
+
+	if (NULL == shost) {
+		goto END;
+	}
+
+	if (NULL == (ap = ata_shost_to_port(shost))) {
+		goto END;
+	}
+
+	// fault pins on last 4 pins
+	led_idx = ap->print_id - ap->host->ports[0]->print_id + 4;
+
+	value = syno_mv_9235_gpio_reg_read(ap->host, MV_9235_GPIO_DATA_OUT);
+
+	if (value & (1 << led_idx)) {
+		ret = 1;
+	} else {
+		ret = 0;
+	}
+END:
+	if (NULL != shost) {
+		scsi_host_put(shost);
+	}
+	return ret;
+}
+EXPORT_SYMBOL(syno_mv_9235_disk_led_get);
+
+/*
+ *	Write value to 9235 gpio
+ */
+int syno_mv_9235_disk_led_set(const unsigned short hostnum, int iValue)
+{
+	struct Scsi_Host *shost = scsi_host_lookup(hostnum);
+	struct ata_port *ap = NULL;
+	int ret = -EINVAL;
+	u32 value;
+	int led_idx;
+
+	if(NULL == shost) {
+		goto END;
+	}
+
+	if(NULL == (ap = ata_shost_to_port(shost))) {
+		goto END;
+	}
+
+	led_idx = ap->print_id - ap->host->ports[0]->print_id + 4;
+	value = syno_mv_9235_gpio_reg_read(ap->host, MV_9235_GPIO_DATA_OUT);
+	if (1 == iValue) {
+		value |= (1 << led_idx);
+	} else {
+		value &= ~(1 << led_idx);
+	}
+	syno_mv_9235_gpio_reg_set(ap->host, MV_9235_GPIO_DATA_OUT, value);
+	ret = 0;
+END:
+	if (NULL != shost) {
+		scsi_host_put(shost);
+	}
+	return ret;
+}
+
+EXPORT_SYMBOL(syno_mv_9235_disk_led_set);
+#endif /* MY_ABC_HERE*/
+
+#ifdef SYNO_ATA_SHUTDOWN_FIX
+void ahci_pci_shutdown(struct pci_dev *pdev){
+	int i;
+	struct ata_host *host = dev_get_drvdata(&pdev->dev);
+	struct Scsi_Host *shost;
+
+	if(NULL == host){
+		 goto END;
+	}
+
+	for (i = 0; i < host->n_ports; i++) {
+		shost = host->ports[i]->scsi_host;
+		if (shost->hostt->syno_host_poweroff_task) {
+			shost->hostt->syno_host_poweroff_task(shost);
+		}
+	}
+
+	if (pdev->irq >= 0) {
+		free_irq(pdev->irq, host);
+		pdev->irq = -1;
+	}
+END:
+	return;
+}
+#endif
 
 static struct pci_driver ahci_pci_driver = {
 	.name			= DRV_NAME,
 	.id_table		= ahci_pci_tbl,
 	.probe			= ahci_init_one,
 	.remove			= ata_pci_remove_one,
+#ifdef SYNO_ATA_SHUTDOWN_FIX
+	.shutdown		= ahci_pci_shutdown,
+#endif
 #ifdef CONFIG_PM
 	.suspend		= ahci_pci_device_suspend,
 	.resume			= ahci_pci_device_resume,
@@ -1039,6 +1294,11 @@ static inline void ahci_gtf_filter_workaround(struct ata_host *host)
 {}
 #endif
 
+#ifdef MY_DEF_HERE
+extern void ata_port_wait_eh(struct ata_port *ap);
+extern void ata_scsi_scan_host(struct ata_port *ap, int sync);
+#endif
+
 static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	unsigned int board_id = ent->driver_data;
@@ -1052,6 +1312,12 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	VPRINTK("ENTER\n");
 
+#ifdef MY_ABC_HERE
+	if(0 == g_ahci_switch) {
+		printk("AHCI is disabled.\n");
+		return 0;
+	}
+#endif
 	WARN_ON((int)ATA_MAX_QUEUE > AHCI_MAX_CMDS);
 
 	ata_print_version_once(&pdev->dev, DRV_VERSION);
@@ -1183,12 +1449,29 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	 * determining the maximum port number requires looking at
 	 * both CAP.NP and port_map.
 	 */
+#ifdef MY_ABC_HERE
+	if(gSynoSataHostCnt < sizeof(gszSataPortMap) && 0 != gszSataPortMap[gSynoSataHostCnt]) {
+		n_ports = gszSataPortMap[gSynoSataHostCnt] - '0';
+	}else{
+#endif
 	n_ports = max(ahci_nr_ports(hpriv->cap), fls(hpriv->port_map));
+#ifdef MY_ABC_HERE
+	}
+#endif
 
 	host = ata_host_alloc_pinfo(&pdev->dev, ppi, n_ports);
 	if (!host)
 		return -ENOMEM;
 	host->private_data = hpriv;
+
+#ifdef MY_ABC_HERE
+	if (pdev->vendor == 0x1b4b && pdev->device == 0x9235) {
+		for (i = 0; i < host->n_ports; i++) {
+			struct ata_port *ap = host->ports[i];
+			ap->link.uiStsFlags |= SYNO_STATUS_IS_MV9235;
+		}
+	}
+#endif
 
 	if (!(hpriv->cap & HOST_CAP_SSS) || ahci_ignore_sss)
 		host->flags |= ATA_HOST_PARALLEL_SCAN;
@@ -1234,8 +1517,71 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	ahci_pci_print_info(host);
 
 	pci_set_master(pdev);
+#ifdef MY_ABC_HERE
+	if (pdev->vendor == 0x1b4b && pdev->device == 0x9235) {
+		syno_mv_9235_gpio_active_init(host);
+	}
+#endif /* MY_ABC_HERE */
+#ifdef MY_DEF_HERE
+	/* Only wait for JMiron in 6281 platform */
+	if (pdev->vendor != PCI_VENDOR_ID_JMICRON) {
+		rc = ata_host_activate(host, pdev->irq, ahci_interrupt, IRQF_SHARED,
+							   &ahci_sht);
+		goto END;
+	}
+
+	/* flag ap before probe */
+	for (i = 0; i < host->n_ports; i++) {
+		struct ata_port *ap = host->ports[i];
+		unsigned long flags;
+
+		spin_lock_irqsave(ap->lock, flags);
+		ap->pflags |= ATA_PFLAG_SYNC_SCSI_DEVICE;
+		spin_unlock_irqrestore(ap->lock, flags);
+	}
+
+	rc = ata_host_activate(host, pdev->irq, ahci_interrupt, IRQF_SHARED,
+				 &ahci_sht);
+
+	/**
+	 * Handle magic interrupt in 6281. All port should not have EH
+	 * and ata_aux_wq after successfuly probe, so it is safe to
+	 * flush and wait for those ports.
+     */
+	for (i = 0; i < host->n_ports; i++) {
+		struct ata_port *ap = host->ports[i];
+		unsigned long flags;
+		int blScanHost = 0;
+
+		if (!ata_link_online(&ap->link)) {
+			/* Wait for the magic interrupt. */
+			msleep(2000);
+		}
+
+		/* Wait ATA layer EH */
+		ata_port_wait_eh(ap);
+
+		spin_lock_irqsave(ap->lock, flags);
+		if (!(ap->pflags & ATA_PFLAG_SYNC_SCSI_DEVICE)) {
+			/* There really has hotplug */
+			blScanHost = 1;
+		} else {
+			/* There is no any device hotplug */
+			ap->pflags &= ~ATA_PFLAG_SYNC_SCSI_DEVICE;
+		}
+		spin_unlock_irqrestore(ap->lock, flags);
+
+		if (blScanHost) {
+			ata_scsi_scan_host(ap, 1);
+		}
+	}
+
+END:
+	return rc;
+#else
 	return ata_host_activate(host, pdev->irq, ahci_interrupt, IRQF_SHARED,
 				 &ahci_sht);
+#endif
 }
 
 static int __init ahci_init(void)

@@ -83,6 +83,15 @@ int efi_enabled(int facility)
 }
 EXPORT_SYMBOL(efi_enabled);
 
+#ifdef CONFIG_SYNO_EFI
+static bool disable_runtime = true;
+static int __init setup_withefi(char *arg)
+{
+	disable_runtime = false;
+	return 0;
+}
+early_param("withefi", setup_withefi);
+#else
 static bool disable_runtime = false;
 static int __init setup_noefi(char *arg)
 {
@@ -90,6 +99,7 @@ static int __init setup_noefi(char *arg)
 	return 0;
 }
 early_param("noefi", setup_noefi);
+#endif
 
 int add_efi_memmap;
 EXPORT_SYMBOL(add_efi_memmap);
@@ -601,6 +611,11 @@ void __init efi_init(void)
 #ifdef CONFIG_X86_32
 	x86_platform.get_wallclock = efi_get_time;
 	x86_platform.set_wallclock = efi_set_rtc_mmss;
+#endif
+
+#ifdef MY_DEF_HERE
+	/* Setup for EFI runtime service */
+	reboot_type = BOOT_EFI;
 #endif
 
 #if EFI_DEBUG

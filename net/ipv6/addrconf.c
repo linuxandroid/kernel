@@ -78,6 +78,10 @@
 #include <linux/if_tunnel.h>
 #include <linux/rtnetlink.h>
 
+#if defined(MY_ABC_HERE) && defined(MY_DEF_HERE)
+#include <linux/synobios.h>
+#endif
+
 #ifdef CONFIG_IPV6_PRIVACY
 #include <linux/random.h>
 #endif
@@ -196,7 +200,11 @@ static struct ipv6_devconf ipv6_devconf __read_mostly = {
 	.proxy_ndp		= 0,
 	.accept_source_route	= 0,	/* we do not accept RH0 by default. */
 	.disable_ipv6		= 0,
+#ifdef MY_ABC_HERE
+	.accept_dad     = 2,
+#else
 	.accept_dad		= 1,
+#endif
 };
 
 static struct ipv6_devconf ipv6_devconf_dflt __read_mostly = {
@@ -230,7 +238,11 @@ static struct ipv6_devconf ipv6_devconf_dflt __read_mostly = {
 	.proxy_ndp		= 0,
 	.accept_source_route	= 0,	/* we do not accept RH0 by default. */
 	.disable_ipv6		= 0,
+#ifdef MY_ABC_HERE
+    .accept_dad     = 2,
+#else
 	.accept_dad		= 1,
+#endif
 };
 
 /* IPv6 Wildcard Address and Loopback Address defined by RFC2553 */
@@ -1109,9 +1121,15 @@ out:
 	return ret;
 }
 
+#if defined(CONFIG_SYNO_COMCERTO)
+static int __ipv6_dev_get_saddr(struct net *net, struct net_device *dst_dev,
+		       const struct in6_addr *daddr, unsigned int prefs,
+		       struct in6_addr *saddr)
+#else
 int ipv6_dev_get_saddr(struct net *net, struct net_device *dst_dev,
 		       const struct in6_addr *daddr, unsigned int prefs,
 		       struct in6_addr *saddr)
+#endif
 {
 	struct ipv6_saddr_score scores[2],
 				*score = &scores[0], *hiscore = &scores[1];
@@ -1234,7 +1252,9 @@ try_nextdev:
 	in6_ifa_put(hiscore->ifa);
 	return 0;
 }
+#if !defined(CONFIG_SYNO_COMCERTO)
 EXPORT_SYMBOL(ipv6_dev_get_saddr);
+#endif
 
 int ipv6_get_lladdr(struct net_device *dev, struct in6_addr *addr,
 		    unsigned char banned_flags)
@@ -1815,6 +1835,22 @@ static struct inet6_dev *addrconf_add_dev(struct net_device *dev)
 	return idev;
 }
 
+/**
+ * Dsc: because of DS110p & DS210p face problem of timer delay, which will cause both machine can't pass IPv6 ready logo phase 2
+ *		we work around here to avoid timer trouble. but if timer problem is fixed, this code must be removed
+ */
+#if defined(MY_ABC_HERE) && defined(MY_DEF_HERE)
+void SYNO_IPV6_ready_timer_workaround(__u32 *valid_lft, __u32 *prefered_lft)
+{
+	if(syno_is_hw_version(HW_DS110p) ||
+	   syno_is_hw_version(HW_DS210p) ||
+	   syno_is_hw_version(HW_DS410)) {
+		*valid_lft -= (*valid_lft)/400;
+		*prefered_lft -= (*prefered_lft)/400;
+	}
+}
+#endif
+
 void addrconf_prefix_rcv(struct net_device *dev, u8 *opt, int len)
 {
 	struct prefix_info *pinfo;
@@ -1842,6 +1878,10 @@ void addrconf_prefix_rcv(struct net_device *dev, u8 *opt, int len)
 
 	valid_lft = ntohl(pinfo->valid);
 	prefered_lft = ntohl(pinfo->prefered);
+
+#if defined(MY_ABC_HERE) && defined(MY_DEF_HERE)
+	SYNO_IPV6_ready_timer_workaround(&valid_lft, &prefered_lft);
+#endif
 
 	if (prefered_lft > valid_lft) {
 		if (net_ratelimit())
@@ -2021,6 +2061,9 @@ ok:
 					if (valid_lft < prefered_lft)
 						prefered_lft = valid_lft;
 					update_lft = 1;
+#if defined(MY_ABC_HERE) && defined(MY_DEF_HERE)
+				SYNO_IPV6_ready_timer_workaround(&valid_lft, &prefered_lft);
+#endif
 				}
 			}
 
@@ -4816,6 +4859,11 @@ int __init addrconf_init(void)
 
 	ipv6_addr_label_rtnl_register();
 
+#if defined(CONFIG_SYNO_COMCERTO)
+	BUG_ON(ipv6_dev_get_saddr_hook != NULL);
+	rcu_assign_pointer(ipv6_dev_get_saddr_hook, __ipv6_dev_get_saddr);
+#endif
+
 	return 0;
 errout:
 	rtnl_af_unregister(&inet6_ops);
@@ -4833,6 +4881,11 @@ void addrconf_cleanup(void)
 {
 	struct net_device *dev;
 	int i;
+
+#if defined(CONFIG_SYNO_COMCERTO)
+	rcu_assign_pointer(ipv6_dev_get_saddr_hook, NULL);
+	synchronize_rcu();
+#endif
 
 	unregister_netdevice_notifier(&ipv6_dev_notf);
 	unregister_pernet_subsys(&addrconf_ops);

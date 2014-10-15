@@ -51,6 +51,7 @@
 #include <trace/events/sched.h>
 #include <linux/hw_breakpoint.h>
 #include <linux/oom.h>
+#include <linux/writeback.h>
 
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
@@ -499,6 +500,9 @@ struct files_struct *get_files_struct(struct task_struct *task)
 
 	return files;
 }
+#if defined(CONFIG_SYNO_COMCERTO)
+EXPORT_SYMBOL_GPL(get_files_struct);
+#endif
 
 void put_files_struct(struct files_struct *files)
 {
@@ -520,6 +524,9 @@ void put_files_struct(struct files_struct *files)
 		rcu_read_unlock();
 	}
 }
+#if defined(CONFIG_SYNO_COMCERTO)
+EXPORT_SYMBOL_GPL(put_files_struct);
+#endif
 
 void reset_files_struct(struct files_struct *files)
 {
@@ -1018,6 +1025,8 @@ NORET_TYPE void do_exit(long code)
 	validate_creds_for_do_exit(tsk);
 
 	preempt_disable();
+	if (tsk->nr_dirtied)
+		__this_cpu_add(dirty_throttle_leaks, tsk->nr_dirtied);
 	exit_rcu();
 
 	/*

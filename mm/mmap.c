@@ -84,7 +84,11 @@ pgprot_t vm_get_page_prot(unsigned long vm_flags)
 }
 EXPORT_SYMBOL(vm_get_page_prot);
 
+#ifdef MY_ABC_HERE
+int sysctl_overcommit_memory __read_mostly = OVERCOMMIT_ALWAYS;
+#else
 int sysctl_overcommit_memory __read_mostly = OVERCOMMIT_GUESS;  /* heuristic overcommit */
+#endif
 int sysctl_overcommit_ratio __read_mostly = 50;	/* default is 50% */
 int sysctl_max_map_count __read_mostly = DEFAULT_MAX_MAP_COUNT;
 /*
@@ -1586,7 +1590,15 @@ struct vm_area_struct *find_vma(struct mm_struct *mm, unsigned long addr)
 				vma_tmp = rb_entry(rb_node,
 						struct vm_area_struct, vm_rb);
 
+#if defined(CONFIG_SYNO_ARMADA_ARCH) && defined(CONFIG_MV_SUPPORT_64KB_PAGE_SIZE)
+				/* Take into account a wrap-around of the
+				** vm_end field to 0x0. e.g. vm_start =
+				** 0xFFFF0000 size PAGE_SIZE.
+				*/
+				if ((vma_tmp->vm_end - 1) >= addr) {
+#else
 				if (vma_tmp->vm_end > addr) {
+#endif
 					vma = vma_tmp;
 					if (vma_tmp->vm_start <= addr)
 						break;
@@ -1885,8 +1897,13 @@ static void unmap_region(struct mm_struct *mm,
 	update_hiwater_rss(mm);
 	unmap_vmas(&tlb, vma, start, end, &nr_accounted, NULL);
 	vm_unacct_memory(nr_accounted);
+#if defined(CONFIG_SYNO_COMCERTO)
+	free_pgtables(&tlb, vma, prev ? prev->vm_end : FIRST_USER_ADDRESS,
+				 next ? next->vm_start : mm->task_size);
+#else
 	free_pgtables(&tlb, vma, prev ? prev->vm_end : FIRST_USER_ADDRESS,
 				 next ? next->vm_start : 0);
+#endif
 	tlb_finish_mmu(&tlb, start, end);
 }
 
@@ -2261,7 +2278,11 @@ void exit_mmap(struct mm_struct *mm)
 	end = unmap_vmas(&tlb, vma, 0, -1, &nr_accounted, NULL);
 	vm_unacct_memory(nr_accounted);
 
+#if defined(CONFIG_SYNO_COMCERTO)
+	free_pgtables(&tlb, vma, FIRST_USER_ADDRESS, mm->task_size);
+#else
 	free_pgtables(&tlb, vma, FIRST_USER_ADDRESS, 0);
+#endif
 	tlb_finish_mmu(&tlb, 0, end);
 
 	/*

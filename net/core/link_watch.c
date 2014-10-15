@@ -23,7 +23,6 @@
 #include <linux/bitops.h>
 #include <asm/types.h>
 
-
 enum lw_bits {
 	LW_URGENT = 0,
 };
@@ -196,6 +195,7 @@ static void __linkwatch_run_queue(int urgent_only)
 			list_add_tail(&dev->link_watch_list, &lweventlist);
 			continue;
 		}
+
 		spin_unlock_irq(&lweventlist_lock);
 		linkwatch_do_dev(dev);
 		spin_lock_irq(&lweventlist_lock);

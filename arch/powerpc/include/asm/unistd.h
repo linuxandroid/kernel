@@ -1,6 +1,10 @@
 #ifndef _ASM_POWERPC_UNISTD_H_
 #define _ASM_POWERPC_UNISTD_H_
 
+#if 1 //SYNO
+#include <linux/syno.h>
+#endif
+
 /*
  * This file contains the system call numbers.
  *
@@ -376,9 +380,116 @@
 #define __NR_process_vm_readv	351
 #define __NR_process_vm_writev	352
 
+#ifdef MY_ABC_HERE
+#define __NR_SYNOMTDAlloc			405
+#define SYNOMTDAlloc(x)				syscall(__NR_SYNOMTDAlloc, x)
+#endif
+
+#ifdef MY_ABC_HERE
+#define __NR_SYNOUtime				402
+#define SYNOUtime(arg1, arg2)			syscall(__NR_SYNOUtime, arg1, arg2)
+#endif
+
+#ifdef MY_ABC_HERE
+#define __NR_SYNOArchiveBit			403
+#define SYNOArchiveBit(arg1, arg2)		syscall(__NR_SYNOArchiveBit, arg1, arg2)
+#endif
+
+#ifdef MY_ABC_HERE
+#define __NR_recvfile				404
+#define recvfile(arg1,arg2,arg3,arg4,arg5)	syscall(__NR_recvfile,arg1,arg2,arg3,arg4,arg5)
+#endif
+
+#ifdef MY_ABC_HERE
+#define __NR_SYNOCaselessStat64			406
+#define __NR_SYNOCaselessLStat64			407
+#define __NR_SYNOCaselessStat			408
+#define __NR_SYNOCaselessLStat			409
+
+#if !defined(__KERNEL__)
+/* direct SYNOCaselessStat to stat64 in 32-bit platform
+ * 64-bits arch has no stat64 support */
+#include <bits/wordsize.h>
+#if __WORDSIZE == 64
+#define SYNOCaselessStat(arg1,arg2)                         syscall(__NR_SYNOCaselessStat , arg1,arg2)
+#define SYNOCaselessLStat(arg1,arg2)                         syscall(__NR_SYNOCaselessLStat , arg1,arg2)
+#elif (_FILE_OFFSET_BITS == 64)
+#define SYNOCaselessStat(arg1,arg2)                         syscall(__NR_SYNOCaselessStat64 , arg1,arg2)
+#define SYNOCaselessLStat(arg1,arg2)                         syscall(__NR_SYNOCaselessLStat64 , arg1,arg2)
+#endif
+/* define stat64 interface for compatibility
+   These should be removed after AP modification */
+#define SYNOCaselessStat64(arg1,arg2)                         syscall(__NR_SYNOCaselessStat64 , arg1,arg2)
+#define SYNOCaselessLStat64(arg1,arg2)                         syscall(__NR_SYNOCaselessLStat64 , arg1,arg2)
+#endif
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+#define __NR_SYNOEcryptName                 410
+#define __NR_SYNODecryptName                411
+#define SYNOEcryptName(arg1, arg2)          syscall(__NR_SYNOEcryptName, arg1, arg2)
+#define SYNODecryptName(arg1, arg2, arg3)         syscall(__NR_SYNODecryptName, arg1, arg2, arg3)
+#endif
+
+#ifdef MY_ABC_HERE
+#define __NR_SYNOACLCheckPerm               412
+#define SYNOACLSysCheckPerm(arg1, arg2)            syscall(__NR_SYNOACLCheckPerm, arg1, arg2)
+#define __NR_SYNOACLIsSupport               413
+#define SYNOACLSysIsSupport(arg1, arg2, arg3)            syscall(__NR_SYNOACLIsSupport, arg1, arg2, arg3)
+#define __NR_SYNOACLGetPerm               414
+#define SYNOACLSysGetPerm(arg1, arg2)            syscall(__NR_SYNOACLGetPerm, arg1, arg2)
+#endif /* MY_ABC_HERE */
+
+
+#ifdef MY_ABC_HERE
+#define __NR_SYNOStat              (__NR_SYSCALL_BASE+416)
+#define __NR_SYNOFStat              (__NR_SYSCALL_BASE+417)
+#define __NR_SYNOLStat              (__NR_SYSCALL_BASE+418)
+#define __NR_SYNOStat64              (__NR_SYSCALL_BASE+419)
+#define __NR_SYNOFStat64             (__NR_SYSCALL_BASE+420)
+#define __NR_SYNOLStat64              (__NR_SYSCALL_BASE+421)
+
+#if !defined(__KERNEL__)
+/* direct SYNOStat to stat64 in 32-bit platform
+ * 64-bits arch has no stat64 support */
+#include <bits/wordsize.h>
+#if __WORDSIZE == 64
+#define SYNOStat(arg1, arg2, arg3)  syscall(__NR_SYNOStat, arg1, arg2, arg3)
+#define SYNOFStat(arg1, arg2, arg3) syscall(__NR_SYNOFStat, arg1, arg2, arg3)
+#define SYNOLStat(arg1, arg2, arg3) syscall(__NR_SYNOLStat, arg1, arg2, arg3)
+#elif (_FILE_OFFSET_BITS == 64)
+#define SYNOStat(arg1, arg2, arg3)  syscall(__NR_SYNOStat64, arg1, arg2, arg3)
+#define SYNOFStat(arg1, arg2, arg3) syscall(__NR_SYNOFStat64, arg1, arg2, arg3)
+#define SYNOLStat(arg1, arg2, arg3) syscall(__NR_SYNOLStat64, arg1, arg2, arg3)
+#endif
+#endif /* __KERNEL__ */
+#endif /* MY_ABC_HERE */
+#ifdef CONFIG_SYNO_NOTIFY
+#define __NR_SYNONotifyInit		422
+#define SYNONotifyInit(arg1)	syscall(__NR_SYNONotifyInit, arg1)
+#define __NR_SYNONotifyAddWatch		423
+#define SYNONotifyAddWatch(arg1, arg2, arg3)	syscall(__NR_SYNONotifyAddWatch, arg1, arg2, arg3)
+#define __NR_SYNONotifyRemoveWatch		424
+#define SYNONotifyRemoveWatch(arg1, arg2, arg3)	syscall(__NR_SYNONotifyRemoveWatch, arg1, arg2, arg3)
+#define __NR_SYNONotifyAddWatch32		425
+#define SYNONotifyAddWatch32(arg1, arg2, arg3)	syscall(__NR_SYNONotifyAddWatch32, arg1, arg2, arg3)
+#define __NR_SYNONotifyRemoveWatch32	426
+#define SYNONotifyRemoveWatch32(arg1, arg2, arg3)	syscall(__NR_SYNONotifyRemoveWatch32, arg1, arg2, arg3)
+#endif /* CONFIG_SYNO_NOTIFY */
+
+#ifdef MY_ABC_HERE
+#define __NR_SYNOArchiveOverwrite	427
+#define SYNOArchiveOverwrite(arg1, arg2)	syscall(__NR_SYNOArchiveOverwrite, arg1, arg2)
+#endif
+
 #ifdef __KERNEL__
 
+#ifdef MY_ABC_HERE 
+/* must match arch/powerpc/include/asm/systbl.h */
+#define __NR_syscalls		450
+#else
 #define __NR_syscalls		353
+#endif
 
 #define __NR__exit __NR_exit
 #define NR_syscalls	__NR_syscalls

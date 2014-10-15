@@ -32,6 +32,19 @@
 #include <linux/security.h>
 #include <linux/gfp.h>
 #include <linux/socket.h>
+#if defined(CONFIG_SYNO_COMCERTO)
+#include <linux/time.h>
+#endif
+#if defined(CONFIG_SYNO_ARMADA)
+#include <net/sock.h>
+#include <linux/net.h>
+#include <linux/socket.h>
+#include <linux/genalloc.h>
+
+struct common_mempool;
+static struct common_mempool/*struct gen_pool*/ * rcv_pool = NULL;
+static struct common_mempool/*struct gen_pool*/ * kvec_pool = NULL;
+#endif
 
 /*
  * Attempt to steal a page from a pipe buffer. This should perhaps go into
@@ -535,10 +548,15 @@ ssize_t generic_file_splice_read(struct file *in, loff_t *ppos,
 		len = left;
 
 	ret = __generic_file_splice_read(in, ppos, pipe, len, flags);
-	if (ret > 0) {
+#if defined(CONFIG_SYNO_ARMADA)
+	if (ret > 0)
 		*ppos += ret;
+#else
+	if (ret > 0) {
+ 		*ppos += ret;
 		file_accessed(in);
 	}
+#endif
 
 	return ret;
 }
@@ -691,6 +709,21 @@ static int pipe_to_sendpage(struct pipe_inode_info *pipe,
 {
 	struct file *file = sd->u.file;
 	loff_t pos = sd->pos;
+#if defined(CONFIG_SYNO_ARMADA)
+	int ret, more;
+
+	ret = buf->ops->confirm(pipe, buf);
+	if (!ret) {
+		more = (sd->flags & SPLICE_F_MORE) ? MSG_MORE : 0;
+		if (sd->len < sd->total_len && pipe->nrbufs > 1)
+			more |= MSG_SENDPAGE_NOTLAST;
+
+		ret = file->f_op->sendpage(file, buf->page, buf->offset,
+					   sd->len, &pos, more);
+	}
+
+	return ret;
+#else
 	int more;
 
 	if (!likely(file->f_op && file->f_op->sendpage))
@@ -703,6 +736,7 @@ static int pipe_to_sendpage(struct pipe_inode_info *pipe,
 
 	return file->f_op->sendpage(file, buf->page, buf->offset,
 				    sd->len, &pos, more);
+#endif
 }
 
 /*
@@ -841,6 +875,380 @@ int splice_from_pipe_feed(struct pipe_inode_info *pipe, struct splice_desc *sd,
 	return 1;
 }
 EXPORT_SYMBOL(splice_from_pipe_feed);
+
+
+#if defined(CONFIG_SYNO_COMCERTO) && defined(CONFIG_COMCERTO_IMPROVED_SPLICE)
+#if !defined(CONFIG_COMCERTO_SPLICE_USE_MDMA)
+#define MSPD_SPLICE_NUM_DMA		100
+#else
+#define MSPD_SPLICE_NUM_DMA		MDMA_OUTBOUND_BUF_DESC
+#endif
+
+#if defined(CONFIG_COMCERTO_SPLICE_PROF)
+unsigned int enable_splice_prof = 0;
+#endif
+
+int comcerto_splice_from_pipe_feed(struct pipe_inode_info *pipe, struct splice_desc *sd)
+{
+	struct page **mspd_splice_pages;
+	void **mspd_splice_fsdata;
+	struct pipe_buffer *buf;
+	const struct pipe_buf_operations *ops;
+	int ret, ret2 = 0, remaining;
+	unsigned int curbuf, nrbufs, len, nrbufs_len, done;
+	loff_t pos, offset;
+	struct file *file = sd->u.file;
+	struct address_space *mapping = file->f_mapping;
+	struct page **page;
+	void **fsdata;
+	unsigned int size;
+#if !defined(CONFIG_COMCERTO_SPLICE_USE_MDMA)
+	unsigned int buf_len, buf_offset;
+	char *src, *dst;
+#else
+	struct comcerto_dma_sg *sg;
+#endif
+
+	size = (sizeof(struct page *) + sizeof(void *)) * MSPD_SPLICE_NUM_DMA;
+
+#if defined(CONFIG_COMCERTO_SPLICE_USE_MDMA)
+	size = ALIGN(size, 8) + sizeof(struct comcerto_dma_sg);
+#endif
+
+	mspd_splice_pages = kmalloc(size, GFP_KERNEL);
+	if (!mspd_splice_pages)
+		return -ENOMEM;
+
+	mspd_splice_fsdata = (void **)(mspd_splice_pages + MSPD_SPLICE_NUM_DMA);
+
+#if defined(CONFIG_COMCERTO_SPLICE_USE_MDMA)
+	sg = (struct comcerto_dma_sg *)(mspd_splice_fsdata + MSPD_SPLICE_NUM_DMA);
+	sg = PTR_ALIGN(sg, 8);
+#endif
+
+start:
+#if defined(CONFIG_COMCERTO_SPLICE_USE_MDMA)
+	comcerto_dma_sg_init(sg);
+#endif
+
+	//Compute length to transfer (in bytes), and make sure data is there
+	nrbufs_len = 0;
+	nrbufs = pipe->nrbufs;
+	curbuf = pipe->curbuf;
+	while (nrbufs) {
+		buf = pipe->bufs + curbuf;
+
+		ret = buf->ops->confirm(pipe, buf);
+		if (unlikely(ret)) {
+			printk(KERN_WARNING "%s: buf->ops->confirm() failed(%d)\n", __func__, ret);
+			if (ret == -ENODATA)
+				ret = 0;
+			goto err;
+		}
+
+#if defined(CONFIG_COMCERTO_SPLICE_USE_MDMA)
+		// Is there a risk of getting the same page more than once (several buffers in a single page)?
+		ret = comcerto_dma_sg_add_input(sg, buf->page, buf->offset, buf->len, 0);
+		if (unlikely(ret)) {
+			printk(KERN_WARNING "%s: out of input bdescs\n", __func__);
+			break; //We will transfer what we could up to the previous buffer, based on nrbufs_len
+		}
+#endif
+
+		nrbufs_len += buf->len;
+
+		if (nrbufs_len > sd->total_len) {
+			nrbufs_len = sd->total_len;
+			break;
+		}
+
+		// - 2 because first and last pages could be almost empty depending on alignment
+		if (nrbufs_len > (MSPD_SPLICE_NUM_DMA - 2)*PAGE_CACHE_SIZE) {
+			nrbufs_len = (MSPD_SPLICE_NUM_DMA - 2)*PAGE_CACHE_SIZE;
+			break;
+		}
+		curbuf = (curbuf + 1) & (pipe->buffers - 1);
+		nrbufs--;
+	}
+
+	if (unlikely(nrbufs_len == 0)) {
+		printk(KERN_WARNING "%s: nrbufs_len == 0\n", __func__);
+		ret = 0;
+		goto err;
+	}
+
+//	printk("BLA nrbufs_len: %d\n", nrbufs_len);
+
+	/* Allocate as many destinations pages as needed.
+	 * First and last pages are likely not to be filled, but the ones in-between will.
+	 * If some allocations fail, finish the work on the allocated pages.
+	 */
+	page = &mspd_splice_pages[0];
+	fsdata = &mspd_splice_fsdata[0];
+
+	pos = sd->pos;
+	offset = pos & ~PAGE_CACHE_MASK;
+	len = nrbufs_len;
+
+	if (likely(len + offset > PAGE_CACHE_SIZE))
+		len = PAGE_CACHE_SIZE - offset;
+
+	ret = pagecache_write_begin(file, mapping, pos, len,
+			AOP_FLAG_UNINTERRUPTIBLE, page, fsdata);
+	if (unlikely(ret))
+		goto err;		// We failed early, so we still have an easy way out
+
+#if defined(CONFIG_COMCERTO_SPLICE_USE_MDMA)
+	comcerto_dma_sg_add_output(sg, *page, offset, len, 1); //Don't check result since we should have at least one entry at this point
+#endif
+
+	pos += len;
+	remaining = nrbufs_len - len;
+	page++;
+	fsdata++;
+
+	while (remaining > PAGE_CACHE_SIZE) {
+		ret = pagecache_write_begin(file, mapping, pos, PAGE_CACHE_SIZE,
+				AOP_FLAG_UNINTERRUPTIBLE, page, fsdata);
+
+		if (unlikely(ret))
+			goto write_begin_done;
+
+#if defined(CONFIG_COMCERTO_SPLICE_USE_MDMA)
+		ret = comcerto_dma_sg_add_output(sg, *page, 0, PAGE_CACHE_SIZE, 1);
+		if (unlikely(ret)) {
+			pagecache_write_end(file, mapping, pos, PAGE_CACHE_SIZE, 0, *page, *fsdata);
+			goto write_begin_done;
+		}
+#endif
+		pos += PAGE_CACHE_SIZE;
+		remaining -= PAGE_CACHE_SIZE;
+		page++;
+		fsdata++;
+	}
+
+	if (remaining) {
+		ret = pagecache_write_begin(file, mapping, pos, remaining,
+						AOP_FLAG_UNINTERRUPTIBLE, page, fsdata);
+
+		if (unlikely(ret))
+			goto write_begin_done;
+
+#if defined(CONFIG_COMCERTO_SPLICE_USE_MDMA)
+		ret = comcerto_dma_sg_add_output(sg, *page, 0, remaining, 1);
+		if (unlikely(ret)) {
+			pagecache_write_end(file, mapping, pos, remaining, 0, *page, *fsdata);
+			goto write_begin_done;
+		}
+#endif
+		remaining = 0;
+	}
+
+write_begin_done:
+	// Couldn't allocate all pages or bdescs, so update the total length accordingly
+	if (unlikely(remaining))
+		nrbufs_len = nrbufs_len - remaining;
+
+	//Now do the copies
+#if defined(CONFIG_COMCERTO_SPLICE_USE_MDMA)
+
+	comcerto_dma_get();
+
+	comcerto_dma_sg_setup(sg, nrbufs_len);
+
+	comcerto_dma_start();
+	comcerto_dma_wait();
+	comcerto_dma_put();
+
+	comcerto_dma_sg_cleanup(sg, nrbufs_len);
+#else
+	remaining = nrbufs_len;
+	curbuf = pipe->curbuf;
+	buf = pipe->bufs + curbuf;
+	buf_len = buf->len;
+	buf_offset = buf->offset;
+	src = buf->ops->map(pipe, buf, 1);
+	pos = sd->pos;
+	offset = pos & ~PAGE_CACHE_MASK;
+	page = &mspd_splice_pages[0];
+	dst = kmap_atomic(*page, KM_USER1);
+
+	while (remaining) {
+		len = remaining;
+		if (len + offset > PAGE_CACHE_SIZE)
+			len = PAGE_CACHE_SIZE - offset;
+		if (len > buf_len)
+			len = buf_len;
+
+		memcpy(dst + offset, src + buf_offset, len);
+
+		buf_len -= len;
+		buf_offset += len;
+		remaining -= len;
+		pos += len;
+		offset = pos & ~PAGE_CACHE_MASK;
+
+		if (!offset) {
+			/* FIXME if this was the last page we should still flush/unmap, even if it's not a full page */
+			/* ... actually it looks ok, the unmap is done outside the loop */
+			flush_dcache_page(*page);
+			kunmap_atomic(dst, KM_USER1);
+			if (remaining) {
+				page++;
+				dst = kmap_atomic(*page, KM_USER1);
+			}
+		}
+
+		if (!buf_len) {
+			buf->ops->unmap(pipe, buf, src);
+			if (remaining) {
+				curbuf = (curbuf + 1) & (pipe->buffers - 1);
+				buf = pipe->bufs + curbuf;
+				buf_len = buf->len;
+				buf_offset = buf->offset;
+				src = buf->ops->map(pipe, buf, 1);
+			}
+		}
+	}
+
+	if (offset) {
+		flush_dcache_page(*page);
+		kunmap_atomic(dst, KM_USER1);
+	}
+
+	if (buf_len)
+		buf->ops->unmap(pipe, buf, src);
+#endif
+
+
+	//loop on write_end, update sd fields
+	page = &mspd_splice_pages[0];
+	fsdata = &mspd_splice_fsdata[0];
+	offset = sd->pos & ~PAGE_CACHE_MASK;
+	pos = sd->pos;
+	remaining = nrbufs_len;
+	len = nrbufs_len;
+	done = 0;
+
+	if (likely(len + offset > PAGE_CACHE_SIZE))
+		len = PAGE_CACHE_SIZE - offset;
+
+	ret = pagecache_write_end(file, mapping, pos, len, len,
+			*page, *fsdata);
+
+	/* In case of error or short write we need to report error to the caller */
+	/* If there was already a previous error, just continue doing the pagecache_write_end() cleanup */
+	/* Otherwise keep track of how many bytes we have succefully written and that an error happened */
+	if (unlikely(ret != len)) {
+		printk(KERN_ERR "Failed on write_end, continuing with other buffers\n");
+
+		/* Only report error to caller if nothing has been done */
+		ret2 = ret;
+		nrbufs_len = (ret > 0) ? ret: 0;
+	}
+
+	pos += len;
+	done += len;
+	remaining -= len;
+
+	page++;
+	fsdata++;
+
+	while (remaining > PAGE_CACHE_SIZE) {
+		ret = pagecache_write_end(file, mapping, pos, PAGE_CACHE_SIZE, PAGE_CACHE_SIZE,
+				*page, *fsdata);
+
+		if (unlikely((ret != PAGE_CACHE_SIZE) && !ret2)) {
+			printk(KERN_ERR "Failed on write_end, continuing with other buffers\n");
+
+			nrbufs_len = done;
+
+			if (ret >= 0)
+				nrbufs_len += ret;
+
+			ret2 = nrbufs_len;
+		}
+
+		pos += PAGE_CACHE_SIZE;
+		done += PAGE_CACHE_SIZE;
+		remaining -= PAGE_CACHE_SIZE;
+
+		page++;
+		fsdata++;
+	}
+
+	if (remaining) {
+		ret = pagecache_write_end(file, mapping, pos, remaining, remaining,
+					*page, *fsdata);
+
+		if (unlikely((ret != remaining) && !ret2)) {
+			printk(KERN_ERR "Failed on write_end, continuing with other buffers\n");
+
+			nrbufs_len = done;
+
+			if (ret >= 0)
+				nrbufs_len += ret;
+
+			ret2 = nrbufs_len;
+		}
+	}
+
+	sd->num_spliced += nrbufs_len;
+	sd->len -= nrbufs_len;
+	sd->pos += nrbufs_len;
+	sd->total_len -= nrbufs_len;
+
+	//loop on pipe buffers to release them
+	remaining = nrbufs_len;
+	buf = pipe->bufs + pipe->curbuf;
+
+	while (remaining && (remaining >= buf->len)) {
+		ops = buf->ops;
+
+		remaining -= buf->len;
+		buf->len = 0;
+		buf->ops = NULL;
+		ops->release(pipe, buf);
+		pipe->nrbufs--;
+		pipe->curbuf = (pipe->curbuf + 1) & (pipe->buffers - 1);
+		buf = pipe->bufs + pipe->curbuf;
+	}
+
+	// Last buffer, might not be empty
+	if (remaining) {
+		buf->len -= remaining;
+		buf->offset += remaining;
+	}
+
+	if (pipe->inode)
+		sd->need_wakeup = true;
+
+	if (!sd->total_len) {
+		kfree(mspd_splice_pages);
+		return 0;
+	}
+
+	if (ret2) {
+		if (ret2 > 0)
+			ret = 0;
+		else
+			ret = ret2;
+
+		goto err;
+	}
+
+	if (pipe->nrbufs)
+		goto start;
+
+	ret = 1;
+
+err:
+	kfree(mspd_splice_pages);
+
+	return ret;
+}
+EXPORT_SYMBOL(comcerto_splice_from_pipe_feed);
+#endif
 
 /**
  * splice_from_pipe_next - wait for some data to splice from
@@ -1002,6 +1410,8 @@ generic_file_splice_write(struct pipe_inode_info *pipe, struct file *out,
 	};
 	ssize_t ret;
 
+	sb_start_write(inode->i_sb);
+
 	pipe_lock(pipe);
 
 	splice_from_pipe_begin(&sd);
@@ -1013,8 +1423,100 @@ generic_file_splice_write(struct pipe_inode_info *pipe, struct file *out,
 		mutex_lock_nested(&inode->i_mutex, I_MUTEX_CHILD);
 		ret = file_remove_suid(out);
 		if (!ret) {
+#if defined(CONFIG_SYNO_ARMADA)
+#else
+			ret = file_update_time(out);
+#endif
+			if (!ret)
+				ret = splice_from_pipe_feed(pipe, &sd,
+							    pipe_to_file);
+		}
+		mutex_unlock(&inode->i_mutex);
+	} while (ret > 0);
+	splice_from_pipe_end(pipe, &sd);
+
+	pipe_unlock(pipe);
+
+	if (sd.num_spliced)
+		ret = sd.num_spliced;
+
+	if (ret > 0) {
+		int err;
+
+		err = generic_write_sync(out, *ppos, ret);
+		if (err)
+			ret = err;
+		else
+			*ppos += ret;
+		balance_dirty_pages_ratelimited(mapping);
+	}
+	sb_end_write(inode->i_sb);
+
+	return ret;
+}
+
+EXPORT_SYMBOL(generic_file_splice_write);
+
+#if defined(CONFIG_SYNO_COMCERTO) && defined(CONFIG_COMCERTO_SPLICE_PROF)
+unsigned int splicew_time_counter[256];
+unsigned int splicew_reqtime_counter[256];
+unsigned int splicew_data_counter[256];
+static struct timeval last_splicew;
+unsigned int init_splicew_prof = 0;
+#endif
+
+#if defined(CONFIG_SYNO_COMCERTO) && defined(CONFIG_COMCERTO_IMPROVED_SPLICE)
+ssize_t
+comcerto_file_splice_write(struct pipe_inode_info *pipe, struct file *out,
+			  loff_t *ppos, size_t len, unsigned int flags)
+{
+	struct address_space *mapping = out->f_mapping;
+	struct inode *inode = mapping->host;
+	struct splice_desc sd = {
+		.total_len = len,
+		.flags = flags,
+		.pos = *ppos,
+		.u.file = out,
+	};
+	ssize_t ret;
+#if defined(CONFIG_COMCERTO_SPLICE_PROF)
+	struct timeval now;
+	int diff_time_ms;
+#endif
+
+	pipe_lock(pipe);
+
+#if defined(CONFIG_COMCERTO_SPLICE_PROF)
+	if (enable_splice_prof) {
+		do_gettimeofday(&now);
+		if (init_splicew_prof) {
+			diff_time_ms = ((now.tv_sec - last_splicew.tv_sec) * 1000) + ((now.tv_usec - last_splicew.tv_usec) / 1000);
+			if (diff_time_ms < 1000) {
+				splicew_time_counter[diff_time_ms >> 3]++;
+			}
+			else {
+				splicew_time_counter[255]++;
+			}
+		}
+		last_splicew = now;
+		if (len < (1 <<21))
+			splicew_data_counter[(len >> 13) & 0xFF]++;
+		else
+			splicew_data_counter[255]++;
+	}
+#endif
+
+	splice_from_pipe_begin(&sd);
+	do {
+		ret = splice_from_pipe_next(pipe, &sd);
+		if (ret <= 0)
+			break;
+
+		mutex_lock_nested(&inode->i_mutex, I_MUTEX_CHILD);
+		ret = file_remove_suid(out);
+		if (!ret) {
 			file_update_time(out);
-			ret = splice_from_pipe_feed(pipe, &sd, pipe_to_file);
+			ret = comcerto_splice_from_pipe_feed(pipe, &sd);
 		}
 		mutex_unlock(&inode->i_mutex);
 	} while (ret > 0);
@@ -1036,13 +1538,36 @@ generic_file_splice_write(struct pipe_inode_info *pipe, struct file *out,
 			ret = err;
 		else
 			*ppos += ret;
+#if defined(CONFIG_SYNO_COMCERTO)
+		balance_dirty_pages_ratelimited(mapping);
+#else
 		balance_dirty_pages_ratelimited_nr(mapping, nr_pages);
+#endif
+
 	}
 
+#if defined(CONFIG_COMCERTO_SPLICE_PROF)
+	if (enable_splice_prof) {
+		do_gettimeofday(&now);
+		
+		diff_time_ms = ((now.tv_sec - last_splicew.tv_sec) * 1000) + ((now.tv_usec - last_splicew.tv_usec) / 1000);
+		if (diff_time_ms < 1000) {//Don't record useless data
+			splicew_reqtime_counter[diff_time_ms >> 3]++;
+		}
+		else
+			splicew_reqtime_counter[255]++;
+
+		if(!init_splicew_prof)
+			init_splicew_prof = 1;
+
+		last_splicew = now;
+	}
+#endif
 	return ret;
 }
 
-EXPORT_SYMBOL(generic_file_splice_write);
+EXPORT_SYMBOL(comcerto_file_splice_write);
+#endif
 
 static int write_pipe_buf(struct pipe_inode_info *pipe, struct pipe_buffer *buf,
 			  struct splice_desc *sd)
@@ -1094,8 +1619,13 @@ EXPORT_SYMBOL(generic_splice_sendpage);
 /*
  * Attempt to initiate a splice from pipe to file.
  */
+#ifdef CONFIG_AUFS_FS
+long do_splice_from(struct pipe_inode_info *pipe, struct file *out,
+		    loff_t *ppos, size_t len, unsigned int flags)
+#else /* !SYNO_AUFS */
 static long do_splice_from(struct pipe_inode_info *pipe, struct file *out,
 			   loff_t *ppos, size_t len, unsigned int flags)
+#endif /* SYNO_AUFS */
 {
 	ssize_t (*splice_write)(struct pipe_inode_info *, struct file *,
 				loff_t *, size_t, unsigned int);
@@ -1118,13 +1648,22 @@ static long do_splice_from(struct pipe_inode_info *pipe, struct file *out,
 
 	return splice_write(pipe, out, ppos, len, flags);
 }
+#ifdef CONFIG_AUFS_FS
+EXPORT_SYMBOL(do_splice_from);
+#endif /* SYNO_AUFS */
 
 /*
  * Attempt to initiate a splice from a file to a pipe.
  */
+#ifdef CONFIG_AUFS_FS
+long do_splice_to(struct file *in, loff_t *ppos,
+		  struct pipe_inode_info *pipe, size_t len,
+		  unsigned int flags)
+#else /* !SYNO_AUFS */
 static long do_splice_to(struct file *in, loff_t *ppos,
 			 struct pipe_inode_info *pipe, size_t len,
 			 unsigned int flags)
+#endif /* SYNO_AUFS */
 {
 	ssize_t (*splice_read)(struct file *, loff_t *,
 			       struct pipe_inode_info *, size_t, unsigned int);
@@ -1144,6 +1683,9 @@ static long do_splice_to(struct file *in, loff_t *ppos,
 
 	return splice_read(in, ppos, pipe, len, flags);
 }
+#ifdef CONFIG_AUFS_FS
+EXPORT_SYMBOL(do_splice_to);
+#endif /* SYNO_AUFS */
 
 /**
  * splice_direct_to_actor - splices data directly between two non-pipes
@@ -1388,6 +1930,407 @@ static long do_splice(struct file *in, loff_t __user *off_in,
 
 	return -EINVAL;
 }
+
+#if defined(CONFIG_SYNO_ARMADA)
+/****************************** POOL MANAGER *************************************/
+/* Forward declarations */
+typedef struct common_mempool common_mempool_t;
+void* common_mempool_alloc(common_mempool_t* pool);
+void common_mempool_free(common_mempool_t* pool, void* mem);
+common_mempool_t* common_mempool_get(void* mem);
+common_mempool_t*  common_mempool_create(uint32_t number_of_entries, uint32_t entry_size);
+void  common_mempool_destroy(common_mempool_t* pool);
+int32_t common_mempool_get_number_of_free_entries(common_mempool_t* pool);
+int32_t common_mempool_get_number_of_entries(common_mempool_t* pool);
+int32_t common_mempool_get_entry_size(common_mempool_t* pool);
+
+/* Implementation */
+#define COMMON_MPOOL_HDR_FLAGS_ALLOCATED 0x00000001
+#define COMMON_MPOOL_HDR_MAGIC           0xa5a5a508
+#define COMMON_MPOOL_FTR_MAGIC           0xa5a5a509
+#define COMMON_MPOOL_ALIGN4(size) ((size)+4) & 0xFFFFFFFC;
+#define COMMON_MPOOL_CHECK_ALIGNED4(ptr) ((((uint32_t)(ptr)) & 0x00000003) == 0)
+
+typedef struct common_mpool_hdr
+{
+  struct common_mpool_hdr* next;
+  common_mempool_t*        pool;
+  uint32_t flags;
+  uint32_t magic;
+} common_mpool_hdr_t;
+
+typedef struct
+{
+	uint32_t magic;
+	common_mempool_t* pool;
+} common_mpool_ftr_t;
+
+struct common_mempool
+{
+	common_mpool_hdr_t*  head;
+	common_mpool_hdr_t*  tail;
+	uint32_t		number_of_free_entries;
+	spinlock_t		lock;
+	uint32_t                 data_size; /* size of data section in pool entry */
+	uint32_t                 pool_entry_size; /* size of pool entry */
+	/* parameters passed on init */
+	uint32_t                 number_of_entries;
+	uint32_t                 entry_size;
+	uint8_t*                 mem;
+};
+
+bool common_mempool_check_internal(common_mempool_t * pool,
+                                          void * ptr,
+                                          common_mpool_hdr_t * hdr,
+                                          common_mpool_ftr_t * ftr)
+{
+	if (!ptr) {
+		printk(KERN_ERR "illegal ptr NULL");
+		return false;
+	}
+
+	if (!COMMON_MPOOL_CHECK_ALIGNED4(ptr)) {
+		printk(KERN_ERR "ptr not aligned %p",ptr);
+		return false;
+	}
+
+	if (hdr->magic != COMMON_MPOOL_HDR_MAGIC) {
+		printk(KERN_ERR "illegal hdr magic %x for ptr %p",hdr->magic,ptr);
+		return false;
+	}
+
+	if (ftr->magic != COMMON_MPOOL_FTR_MAGIC) {
+		printk(KERN_ERR "illegal ftr magic %x for ptr %p",ftr->magic,ptr);
+		return false;
+	}
+
+	if (hdr->pool != pool || ftr->pool != pool) {
+		printk(KERN_ERR "inconsistent size hdr->pool: %p ftr->pool: %p for ptr %p",hdr->pool,ftr->pool,ptr);
+		return false;
+	}
+
+	if (!(hdr->flags & COMMON_MPOOL_HDR_FLAGS_ALLOCATED)) {
+		printk(KERN_ERR "ptr %p was not allocated",ptr);
+		return false;
+	}
+	return true;
+}
+
+void* common_mempool_alloc(common_mempool_t* pool)
+{
+	common_mpool_hdr_t* hdr;
+
+	if (!pool || !pool->head || pool->number_of_free_entries == 0) {
+		return NULL;
+	}
+	spin_lock_bh(&pool->lock);
+	hdr = pool->head;
+	pool->head = pool->head->next;
+
+	if (!pool->head) {
+		pool->tail = NULL;
+	}
+
+	hdr->flags = COMMON_MPOOL_HDR_FLAGS_ALLOCATED;
+	pool->number_of_free_entries--;
+	spin_unlock_bh(&pool->lock);
+	return ((uint8_t*)hdr+sizeof(common_mpool_hdr_t));
+}
+
+void common_mempool_free(common_mempool_t* pool, void* ptr)
+{
+	common_mpool_hdr_t* hdr;
+	common_mpool_ftr_t* ftr;
+
+	if (!pool || !ptr) {
+		return;
+	}
+	if (!COMMON_MPOOL_CHECK_ALIGNED4(ptr)) {
+		printk(KERN_ERR "ptr not aligned %p",ptr);
+		return;
+	}
+	spin_lock_bh(&pool->lock);
+	hdr = (common_mpool_hdr_t*)((uint8_t*)ptr-sizeof(common_mpool_hdr_t));
+	ftr = (common_mpool_ftr_t*)((uint8_t*)ptr+pool->data_size);
+
+	if (!common_mempool_check_internal(pool,ptr,hdr,ftr)) {
+		printk(KERN_ERR "invalid ptr %p",ptr);
+		spin_unlock_bh(&pool->lock);
+		return;
+	}
+
+	hdr->flags ^= COMMON_MPOOL_HDR_FLAGS_ALLOCATED;
+	hdr->next = NULL;
+
+	if (!pool->head) {
+		pool->head = pool->tail = hdr;
+	} else {
+		pool->tail->next = hdr;
+		pool->tail = hdr;
+	}
+
+	pool->number_of_free_entries++;
+	spin_unlock_bh(&pool->lock);
+}
+
+common_mempool_t*  common_mempool_create(uint32_t number_of_entries,
+						uint32_t entry_size)
+{
+	uint32_t i;
+	uint32_t aligned_entry_size = COMMON_MPOOL_ALIGN4(entry_size);
+	uint32_t pool_entry_size = COMMON_MPOOL_ALIGN4(sizeof(common_mpool_hdr_t)+aligned_entry_size+sizeof(common_mpool_ftr_t));
+	common_mpool_hdr_t* hdr;
+	common_mpool_hdr_t* next_hdr;
+	common_mpool_ftr_t* ftr;
+	common_mempool_t* pool;
+
+	pool = kmalloc((sizeof(common_mempool_t) + pool_entry_size*number_of_entries), GFP_ATOMIC);
+
+	if (!pool) {
+		return NULL;
+	}
+
+	pool->entry_size = entry_size;
+	pool->number_of_entries = number_of_entries;
+	pool->data_size  = aligned_entry_size;
+	pool->pool_entry_size = pool_entry_size;
+	pool->number_of_free_entries = number_of_entries;
+	pool->mem = (uint8_t*)(pool+1);
+	pool->head = (common_mpool_hdr_t*)pool->mem;
+	spin_lock_init(&pool->lock);
+
+	for (i=0;i<number_of_entries;i++) {
+		hdr = (common_mpool_hdr_t*)&pool->mem[pool_entry_size*i];
+		ftr = (common_mpool_ftr_t*)((uint8_t*)hdr+sizeof(common_mpool_hdr_t)+aligned_entry_size);
+		hdr->magic = COMMON_MPOOL_HDR_MAGIC;
+		hdr->pool = pool;
+		hdr->flags = 0;
+		ftr->magic = COMMON_MPOOL_FTR_MAGIC;
+		ftr->pool = pool;
+
+		if (i < (number_of_entries-1)) {
+			next_hdr = (common_mpool_hdr_t*)&pool->mem[pool_entry_size*(i+1)];
+		} else {
+			pool->tail = hdr;
+			next_hdr = NULL;
+		}
+
+		hdr->next = next_hdr;
+	}
+	return pool;
+}
+
+void  common_mempool_destroy(common_mempool_t* pool)
+{
+	if (!pool) {
+		return;
+	}
+
+	kfree(pool);
+}
+
+int32_t common_mempool_get_number_of_free_entries(common_mempool_t* pool)
+{
+	if (!pool) {
+		return -1;
+	}
+
+	return (int32_t)pool->number_of_free_entries;
+}
+
+int32_t common_mempool_get_number_of_entries(common_mempool_t* pool)
+{
+	if (!pool) {
+		return -1;
+	}
+	return (int32_t)pool->number_of_entries;
+}
+
+int32_t common_mempool_get_entry_size(common_mempool_t* pool)
+{
+	if (!pool) {
+		return -1;
+	}
+	return (int32_t)pool->entry_size;
+}
+
+common_mempool_t* common_mempool_get(void* ptr)
+{
+	common_mpool_hdr_t* hdr;
+	common_mpool_ftr_t* ftr;
+
+	if (!ptr) {
+		return NULL;
+	}
+	if (!COMMON_MPOOL_CHECK_ALIGNED4(ptr)) {
+		return NULL;
+	}
+	hdr = (common_mpool_hdr_t*)((uint8_t*)ptr-sizeof(common_mpool_hdr_t));
+	ftr = (common_mpool_ftr_t*)((uint8_t*)ptr + hdr->pool->data_size);
+
+	if (hdr->magic != COMMON_MPOOL_HDR_MAGIC) {
+		printk(KERN_ERR "illegal hdr magic %x for ptr %p",hdr->magic,ptr);
+		return NULL;
+	}
+	if (ftr->magic != COMMON_MPOOL_FTR_MAGIC) {
+		printk(KERN_ERR "illegal ftr magic %x for ptr %p",ftr->magic,ptr);
+		return NULL;
+	}
+	if (hdr->pool != ftr->pool || !hdr->pool) {
+		printk(KERN_ERR "inconsistent size hdr->pool: %p ftr->pool: %p for ptr %p",hdr->pool,ftr->pool,ptr);
+		return false;
+	}
+	return hdr->pool;
+}
+/****************************** POOL MANAGER *************************************/
+
+ssize_t generic_splice_from_socket(struct file *file, struct socket *sock,
+				     loff_t __user *ppos, size_t count)
+{
+	struct address_space *mapping = file->f_mapping;
+	struct inode *inode = mapping->host;
+	loff_t pos;
+	int count_tmp;
+	int err = 0;
+	int i = 0;
+	int nr_pages = 0;
+	int page_cnt_est= count/PAGE_SIZE + 1;
+	struct recvfile_ctl_blk *rv_cb;
+	struct kvec *iov;
+	struct msghdr msg;
+	long rcvtimeo;
+	int ret;
+
+	if (copy_from_user(&pos, ppos, sizeof(loff_t)))
+		return -EFAULT;
+
+	if (count > MAX_PAGES_PER_RECVFILE * PAGE_SIZE) {
+		printk("%s: count(%u) exceeds maxinum\n", __func__, count);
+		return -EINVAL;
+	}
+	mutex_lock(&inode->i_mutex);
+
+	sb_start_write(inode->i_sb);
+
+	/* We can write back this queue in page reclaim */
+	current->backing_dev_info = mapping->backing_dev_info;
+
+	err = generic_write_checks(file, &pos, &count, S_ISBLK(inode->i_mode));
+	if (err != 0 || count == 0)
+		goto done;
+
+	file_remove_suid(file);
+	file_update_time(file);
+
+	if (unlikely(!rcv_pool || !kvec_pool))
+	{
+		printk(KERN_ERR "rcv_pool %p kvec_pool %p uninitialized %d\n", rcv_pool, kvec_pool);
+		sb_end_write(inode->i_sb);
+		return -ENOMEM;
+	}
+
+	rv_cb = (struct recvfile_ctl_blk *)common_mempool_alloc(rcv_pool);
+	iov = (struct kvec *)common_mempool_alloc(kvec_pool);
+
+	if (!rv_cb || !iov)
+	{
+		printk(KERN_ERR "Failed to get pool mem for %d pages (rv_cb %p iov %p)\n", page_cnt_est, rv_cb, iov);
+		sb_end_write(inode->i_sb);
+		return -ENOMEM;
+	}
+
+	count_tmp = count;
+	do {
+		unsigned long bytes;	/* Bytes to write to page */
+		unsigned long offset;	/* Offset into pagecache page */
+		struct page *pageP;
+		void *fsdata;
+
+		offset = (pos & (PAGE_CACHE_SIZE - 1));
+		bytes = PAGE_CACHE_SIZE - offset;
+		if (bytes > count_tmp)
+			bytes = count_tmp;
+		ret = mapping->a_ops->write_begin(file, mapping, pos, bytes,
+						  AOP_FLAG_UNINTERRUPTIBLE,
+						  &pageP, &fsdata);
+
+		if (unlikely(ret)) {
+			err = ret;
+			goto cleanup;
+		}
+
+		rv_cb[nr_pages].rv_page = pageP;
+		rv_cb[nr_pages].rv_pos = pos;
+		rv_cb[nr_pages].rv_count = bytes;
+		rv_cb[nr_pages].rv_fsdata = fsdata;
+		iov[nr_pages].iov_base = kmap(pageP) + offset;
+		iov[nr_pages].iov_len = bytes;
+		nr_pages++;
+		count_tmp -= bytes;
+		pos += bytes;
+	} while (count_tmp);
+
+	/* IOV is ready, receive the date from socket now */
+	msg.msg_name = NULL;
+	msg.msg_namelen = 0;
+	msg.msg_iov = (struct iovec *)&iov[0];
+	msg.msg_iovlen = nr_pages ;
+	msg.msg_control = NULL;
+	msg.msg_controllen = 0;
+	msg.msg_flags = MSG_KERNSPACE;
+	rcvtimeo = sock->sk->sk_rcvtimeo;
+	sock->sk->sk_rcvtimeo = 8 * HZ;
+
+	ret = kernel_recvmsg(sock, &msg, &iov[0], nr_pages, count,
+			     MSG_WAITALL | MSG_NOCATCHSIGNAL);
+
+	sock->sk->sk_rcvtimeo = rcvtimeo;
+	if(ret != count)
+		err = -EPIPE;
+	else
+		err = 0;
+
+	if (unlikely(err < 0)) {
+		goto cleanup;
+	}
+
+	for(i=0,count=0;i < nr_pages;i++) {
+		kunmap(rv_cb[i].rv_page);
+		ret = mapping->a_ops->write_end(file, mapping,
+						rv_cb[i].rv_pos,
+						rv_cb[i].rv_count,
+						rv_cb[i].rv_count,
+						rv_cb[i].rv_page,
+						rv_cb[i].rv_fsdata);
+		if (unlikely(ret < 0))
+			printk("%s: write_end fail,ret = %d\n", __func__, ret);
+		count += rv_cb[i].rv_count;
+	}
+	balance_dirty_pages_ratelimited(mapping);
+	if (copy_to_user(ppos, &pos, sizeof(loff_t)))
+		err = -EFAULT;
+done:
+	current->backing_dev_info = NULL;
+	common_mempool_free(rcv_pool, (void*)rv_cb);
+	common_mempool_free(kvec_pool, (void*)iov);
+
+	mutex_unlock(&inode->i_mutex);
+	sb_end_write(inode->i_sb);
+	return err ? err : count;
+cleanup:
+	for(i = 0; i < nr_pages; i++) {
+		kunmap(rv_cb[i].rv_page);
+		ret = mapping->a_ops->write_end(file, mapping,
+						rv_cb[i].rv_pos,
+						rv_cb[i].rv_count,
+						rv_cb[i].rv_count,
+						rv_cb[i].rv_page,
+						rv_cb[i].rv_fsdata);
+	}
+
+	goto done;
+}
+#endif
 
 /*
  * Map an iov into an array of pages and offset/length tupples. With the
@@ -1694,14 +2637,46 @@ SYSCALL_DEFINE6(splice, int, fd_in, loff_t __user *, off_in,
 		int, fd_out, loff_t __user *, off_out,
 		size_t, len, unsigned int, flags)
 {
+#if defined(CONFIG_SYNO_ARMADA)
+	int error;
+#else
 	long error;
+#endif
 	struct file *in, *out;
 	int fput_in, fput_out;
+#if defined(CONFIG_SYNO_ARMADA)
+	struct socket *sock = NULL;
+#endif
 
 	if (unlikely(!len))
 		return 0;
 
 	error = -EBADF;
+
+#if defined(CONFIG_SYNO_ARMADA)
+	/* check if fd_in is a socket */
+	sock = sockfd_lookup(fd_in, &error);
+	if (sock) {
+		out = NULL;
+		if (!sock->sk)
+			goto done;
+		out = fget_light(fd_out, &fput_out);
+
+		if (out) {
+			if (!(out->f_mode & FMODE_WRITE))
+				goto done;
+			if (!out->f_op->splice_from_socket)
+				goto done;
+			error = out->f_op->splice_from_socket(out, sock, off_out, len);
+		}
+done:
+		if(out)
+			fput_light(out, fput_out);
+		fput(sock->file);
+		return error;
+	}
+#endif
+
 	in = fget_light(fd_in, &fput_in);
 	if (in) {
 		if (in->f_mode & FMODE_READ) {
@@ -1711,11 +2686,11 @@ SYSCALL_DEFINE6(splice, int, fd_in, loff_t __user *, off_in,
 					error = do_splice(in, off_in,
 							  out, off_out,
 							  len, flags);
-				fput_light(out, fput_out);
+ 				fput_light(out, fput_out);
 			}
 		}
 
-		fput_light(in, fput_in);
+			fput_light(in, fput_in);
 	}
 
 	return error;
@@ -2052,3 +3027,24 @@ SYSCALL_DEFINE4(tee, int, fdin, int, fdout, size_t, len, unsigned int, flags)
 
 	return error;
 }
+
+#if defined(CONFIG_SYNO_ARMADA)
+static int __init init_splice_pools(void)
+{
+	unsigned int rcv_pool_size= sizeof(struct recvfile_ctl_blk) * MAX_PAGES_PER_RECVFILE;
+	unsigned int kve_pool_size= sizeof(struct kvec) * MAX_PAGES_PER_RECVFILE;
+
+	rcv_pool =  common_mempool_create((8 * num_possible_cpus()), rcv_pool_size);
+	kvec_pool = common_mempool_create((8 * num_possible_cpus()), kve_pool_size);
+	if (!rcv_pool || !kvec_pool)
+	{
+		return -ENOMEM;
+	}
+/*
+	printk(KERN_ERR "%s rcv %p (sz:%d) kvec %p (sz:%d) per %d core\n",
+		__FUNCTION__, rcv_pool, rcv_pool_size, kvec_pool, kve_pool_size, num_possible_cpus());
+*/
+}
+
+fs_initcall(init_splice_pools);
+#endif

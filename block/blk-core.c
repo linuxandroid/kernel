@@ -149,6 +149,14 @@ EXPORT_SYMBOL(blk_rq_init);
 static void req_bio_endio(struct request *rq, struct bio *bio,
 			  unsigned int nbytes, int error)
 {
+#ifdef MY_ABC_HERE
+	if (rq->cmd_flags & REQ_AUTO_REMAP){
+		set_bit(BIO_AUTO_REMAP, &bio->bi_flags);
+		rq->cmd_flags &= ~REQ_AUTO_REMAP;
+		printk("%s:%s(%d) set bio BIO_AUTO_REMAP bit on\n",
+			__FILE__, __FUNCTION__, __LINE__);
+	}
+#endif
 	if (error)
 		clear_bit(BIO_UPTODATE, &bio->bi_flags);
 	else if (!test_bit(BIO_UPTODATE, &bio->bi_flags))
@@ -1260,10 +1268,10 @@ static bool attempt_plug_merge(struct request_queue *q, struct bio *bio,
 
 		(*request_count)++;
 
-		if (rq->q != q)
+		if (rq->q != q || !elv_rq_merge_ok(rq, bio))
 			continue;
 
-		el_ret = elv_try_merge(rq, bio);
+		el_ret = blk_try_merge(rq, bio);
 		if (el_ret == ELEVATOR_BACK_MERGE) {
 			ret = bio_attempt_back_merge(q, rq, bio);
 			if (ret)
@@ -1396,7 +1404,11 @@ get_rq:
 	} else {
 		spin_lock_irq(q->queue_lock);
 		add_acct_request(q, req, where);
+#ifdef SYNO_REMOVE_PLUG_INTERFACE
+		blk_delay_queue(q, msecs_to_jiffies(3));
+#else
 		__blk_run_queue(q);
+#endif
 out_unlock:
 		spin_unlock_irq(q->queue_lock);
 	}
@@ -1426,6 +1438,9 @@ static void handle_bad_sector(struct bio *bio)
 {
 	char b[BDEVNAME_SIZE];
 
+#ifdef MY_ABC_HERE
+	if (printk_ratelimit()) {
+#endif
 	printk(KERN_INFO "attempt to access beyond end of device\n");
 	printk(KERN_INFO "%s: rw=%ld, want=%Lu, limit=%Lu\n",
 			bdevname(bio->bi_bdev, b),
@@ -1433,6 +1448,9 @@ static void handle_bad_sector(struct bio *bio)
 			(unsigned long long)bio->bi_sector + bio_sectors(bio),
 			(long long)(i_size_read(bio->bi_bdev->bd_inode) >> 9));
 
+#ifdef MY_ABC_HERE
+	}
+#endif
 	set_bit(BIO_EOF, &bio->bi_flags);
 }
 
@@ -1524,8 +1542,8 @@ generic_make_request_checks(struct bio *bio)
 		goto end_io;
 	}
 
-	if (unlikely(!(bio->bi_rw & REQ_DISCARD) &&
-		     nr_sectors > queue_max_hw_sectors(q))) {
+	if (likely(bio_is_rw(bio) &&
+		   nr_sectors > queue_max_hw_sectors(q))) {
 		printk(KERN_ERR "bio too big device %s (%u > %u)\n",
 		       bdevname(bio->bi_bdev, b),
 		       bio_sectors(bio),
@@ -1566,8 +1584,7 @@ generic_make_request_checks(struct bio *bio)
 
 	if ((bio->bi_rw & REQ_DISCARD) &&
 	    (!blk_queue_discard(q) ||
-	     ((bio->bi_rw & REQ_SECURE) &&
-	      !blk_queue_secdiscard(q)))) {
+	     ((bio->bi_rw & REQ_SECURE) && !blk_queue_secdiscard(q)))) {
 		err = -EOPNOTSUPP;
 		goto end_io;
 	}
@@ -1677,7 +1694,7 @@ void submit_bio(int rw, struct bio *bio)
 	 * If it's a regular read/write or a barrier with data attached,
 	 * go through the normal accounting stuff before submission.
 	 */
-	if (bio_has_data(bio) && !(rw & REQ_DISCARD)) {
+	if (bio_has_data(bio)) {
 		if (rw & WRITE) {
 			count_vm_events(PGPGOUT, count);
 		} else {
@@ -1723,11 +1740,10 @@ EXPORT_SYMBOL(submit_bio);
  */
 int blk_rq_check_limits(struct request_queue *q, struct request *rq)
 {
-	if (rq->cmd_flags & REQ_DISCARD)
+	if (!rq_mergeable(rq))
 		return 0;
 
-	if (blk_rq_sectors(rq) > queue_max_sectors(q) ||
-	    blk_rq_bytes(rq) > queue_max_hw_sectors(q) << 9) {
+	if (blk_rq_sectors(rq) > blk_queue_get_max_sectors(q, rq->cmd_flags)) {
 		printk(KERN_ERR "%s: over max size limit.\n", __func__);
 		return -EIO;
 	}
@@ -2107,9 +2123,15 @@ bool blk_update_request(struct request *req, int error, unsigned int nr_bytes)
 			error_type = "I/O";
 			break;
 		}
+#ifdef MY_ABC_HERE
+		if (printk_ratelimit()) {
+#endif
 		printk(KERN_ERR "end_request: %s error, dev %s, sector %llu\n",
 		       error_type, req->rq_disk ? req->rq_disk->disk_name : "?",
 		       (unsigned long long)blk_rq_pos(req));
+#ifdef MY_ABC_HERE
+		}
+#endif
 	}
 
 	blk_account_io_completion(req, nr_bytes);
@@ -2193,7 +2215,7 @@ bool blk_update_request(struct request *req, int error, unsigned int nr_bytes)
 	req->buffer = bio_data(req->bio);
 
 	/* update sector only for requests with clear definition of sector */
-	if (req->cmd_type == REQ_TYPE_FS || (req->cmd_flags & REQ_DISCARD))
+	if (req->cmd_type == REQ_TYPE_FS)
 		req->__sector += total_bytes >> 9;
 
 	/* mixed attributes always follow the first bio */
@@ -2754,23 +2776,47 @@ static void queue_unplugged(struct request_queue *q, unsigned int depth,
 
 }
 
-static void flush_plug_callbacks(struct blk_plug *plug)
+static void flush_plug_callbacks(struct blk_plug *plug, bool from_schedule)
 {
 	LIST_HEAD(callbacks);
 
-	if (list_empty(&plug->cb_list))
-		return;
+	while (!list_empty(&plug->cb_list)) {
+		list_splice_init(&plug->cb_list, &callbacks);
 
-	list_splice_init(&plug->cb_list, &callbacks);
-
-	while (!list_empty(&callbacks)) {
-		struct blk_plug_cb *cb = list_first_entry(&callbacks,
+		while (!list_empty(&callbacks)) {
+			struct blk_plug_cb *cb = list_first_entry(&callbacks,
 							  struct blk_plug_cb,
 							  list);
-		list_del(&cb->list);
-		cb->callback(cb);
+			list_del(&cb->list);
+			cb->callback(cb, from_schedule);
+		}
 	}
 }
+
+struct blk_plug_cb *blk_check_plugged(blk_plug_cb_fn unplug, void *data,
+				      int size)
+{
+	struct blk_plug *plug = current->plug;
+	struct blk_plug_cb *cb;
+
+	if (!plug)
+		return NULL;
+
+	list_for_each_entry(cb, &plug->cb_list, list)
+		if (cb->callback == unplug && cb->data == data)
+			return cb;
+
+	/* Not currently on the callback list */
+	BUG_ON(size < sizeof(*cb));
+	cb = kzalloc(size, GFP_ATOMIC);
+	if (cb) {
+		cb->data = data;
+		cb->callback = unplug;
+		list_add(&cb->list, &plug->cb_list);
+	}
+	return cb;
+}
+EXPORT_SYMBOL(blk_check_plugged);
 
 void blk_flush_plug_list(struct blk_plug *plug, bool from_schedule)
 {
@@ -2782,7 +2828,7 @@ void blk_flush_plug_list(struct blk_plug *plug, bool from_schedule)
 
 	BUG_ON(plug->magic != PLUG_MAGIC);
 
-	flush_plug_callbacks(plug);
+	flush_plug_callbacks(plug, from_schedule);
 	if (list_empty(&plug->list))
 		return;
 
@@ -2843,6 +2889,20 @@ void blk_finish_plug(struct blk_plug *plug)
 		current->plug = NULL;
 }
 EXPORT_SYMBOL(blk_finish_plug);
+
+#ifdef MY_ABC_HERE
+void syno_flashcache_return_error(struct bio *bio)
+{
+	/* defined in blk_types.h */
+	if (bio_flagged(bio, BIO_MD_RETURN_ERROR)) {
+		printk(KERN_DEBUG "Get flashcache read error, return error code\n");
+		bio_endio(bio, 1);
+	} else {
+		bio_endio(bio, 0);
+	}
+}
+#endif
+EXPORT_SYMBOL(syno_flashcache_return_error);
 
 int __init blk_dev_init(void)
 {

@@ -29,6 +29,11 @@
 #include <net/netfilter/ipv4/nf_conntrack_ipv4.h>
 #include <net/netfilter/ipv6/nf_conntrack_ipv6.h>
 
+#if defined(CONFIG_SYNO_COMCERTO)
+/* Do not check the TCP window for incoming packets  */
+static int nf_ct_tcp_no_window_check __read_mostly = 1;
+#endif
+
 /* "Be conservative in what you do,
     be liberal in what you accept from others."
     If it's non-zero, we mark only out of window RST segments as INVALID. */
@@ -521,6 +526,11 @@ static bool tcp_in_window(const struct nf_conn *ct,
 	s16 receiver_offset;
 	bool res;
 
+#if defined(CONFIG_SYNO_COMCERTO)
+	if (nf_ct_tcp_no_window_check)
+		return true;
+#endif
+
 	/*
 	 * Get the required data from the packet.
 	 */
@@ -983,11 +993,28 @@ static int tcp_packet(struct nf_conn *ct,
 		break;
 	}
 
+#if defined(CONFIG_SYNO_ARMADA)
+#if defined(CONFIG_MV_ETH_NFP_HOOKS)
+	/*
+	 * When connection is handled by NFP, we have to relax TCP tracking
+	 * rules as not all packets goes through Linux conntrack.
+	 */
+	{
+		struct nf_conntrack_tuple *tupleInverseDir;
+
+		tupleInverseDir	= &ct->tuplehash[!dir].tuple;
+		if ((tuple->nfp) || (tupleInverseDir->nfp))
+			goto in_window;
+	}
+#endif /* CONFIG_MV_ETH_NFP_HOOKS */
+#endif
+
 	if (!tcp_in_window(ct, &ct->proto.tcp, dir, index,
 			   skb, dataoff, th, pf)) {
 		spin_unlock_bh(&ct->lock);
 		return -NF_ACCEPT;
 	}
+
      in_window:
 	/* From now on we have got in-window packets */
 	ct->proto.tcp.last_index = index;
@@ -1311,6 +1338,15 @@ static struct ctl_table tcp_sysctl_table[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec,
 	},
+#if defined(CONFIG_SYNO_COMCERTO)
+	{
+		.procname       = "nf_conntrack_tcp_no_window_check",
+		.data           = &nf_ct_tcp_no_window_check,
+		.maxlen         = sizeof(unsigned int),
+		.mode           = 0644,
+		.proc_handler   = proc_dointvec,
+	},
+#endif
 	{
 		.procname       = "nf_conntrack_tcp_be_liberal",
 		.data           = &nf_ct_tcp_be_liberal,

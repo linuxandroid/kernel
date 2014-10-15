@@ -116,11 +116,27 @@ config MPC512X_DMA
 
 config MV_XOR
 	bool "Marvell XOR engine support"
-	depends on PLAT_ORION
+	depends on PLAT_ORION || PLAT_ARMADA
 	select DMA_ENGINE
 	select ASYNC_TX_ENABLE_CHANNEL_SWITCH
 	---help---
 	  Enable support for the Marvell XOR engine.
+
+config COMCERTO_XOR
+	tristate "Mindspeed Comcerto 2000 XOR engine support"
+	depends on ARCH_M86XXX && SYNO_COMCERTO
+	select DMA_ENGINE
+	select ASYNC_TX_ENABLE_CHANNEL_SWITCH
+	---help---
+	  Enable support for the Mindspeed XOR engine.
+
+config COMCERTO_DMA_BASIC
+	tristate "Mindspeed Comcerto 2000 MDMA engine basic support"
+	depends on ARCH_M86XXX && SYNO_COMCERTO
+	select DMA_ENGINE
+	select ASYNC_TX_ENABLE_CHANNEL_SWITCH
+	---help---
+	  Enable support for the Mindspeed mdma engine.
 
 config MX3_IPU
 	bool "MX3x Image Processing Unit support"
@@ -261,9 +277,19 @@ config NET_DMA
 	  Say Y here if you enabled INTEL_IOATDMA or FSL_DMA, otherwise
 	  say N.
 
+config SPLICE_NET_DMA_SUPPORT
+        bool "Net DMA support for splice"
+	depends on NET_DMA && !HIGHMEM
+	default n
+	help
+	  This enables the use of DMA engines in the network stack to
+	  offload splice operations, freeing CPU cycles.
+
+	  If unsure, say N.
+
 config ASYNC_TX_DMA
 	bool "Async_tx: Offload support for the async_tx api"
-	depends on DMA_ENGINE
+	depends on DMA_ENGINE && (!DMA_CACHE_RWFO || AURORA_IO_CACHE_COHERENCY)
 	help
 	  This allows the async_tx api to take advantage of offload engines for
 	  memcpy, memset, xor, and raid6 p+q operations.  If your platform has
@@ -271,6 +297,15 @@ config ASYNC_TX_DMA
 	  MD_RAID456 say Y.
 
 	  If unsure, say N.
+
+config RAID_ZERO_COPY
+        bool "Optimized DMA/XOR offload: reduce raid5 memcpy which offloaded for dma"
+        depends on ASYNC_TX_DMA && SYNO_COMCERTO
+        help
+          This allows the async_tx api try to reduce raid5 memcpy operations for
+          dma. If you have dma device to support memcpy offloading, you can set
+          it as Y, else N.
+
 
 config DMATEST
 	tristate "DMA Test client"

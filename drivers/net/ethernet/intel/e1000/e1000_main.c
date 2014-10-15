@@ -236,6 +236,49 @@ struct net_device *e1000_get_hw_dev(struct e1000_hw *hw)
 	return adapter->netdev;
 }
 
+#ifdef MY_ABC_HERE
+void e1000_syno_led_switch(int iEnable)
+{
+#ifdef CONFIG_ARCH_GEN3
+	struct net_device *dev = NULL;
+	struct e1000_adapter *adapter = NULL;
+	struct e1000_hw *hw = NULL;
+	static u16 uiActLedCtrl = 0, uiLinkLedCtrl = 0;
+	u16 uiActLedCtrlReg = 0, uiLinkLedCtrlReg = 0;
+
+	dev = first_net_device(&init_net);
+	adapter = netdev_priv(dev);
+	hw = &adapter->hw;
+	/* The structure retured by first_net_device()
+	* does not contain the value of mac_type, this
+	* makes wrong opertaion to r/w phy regs.
+	* So we assign the value for Evansport's nic  here.
+	*/
+	hw->mac_type = e1000_ce4100;
+
+	e1000_write_phy_reg(hw, 31, 0x0007);
+	e1000_write_phy_reg(hw, 30, 0x002C);
+    e1000_read_phy_reg(hw, 26, &uiActLedCtrlReg);
+	e1000_read_phy_reg(hw, 28, &uiLinkLedCtrlReg);
+
+	if (iEnable) {
+		uiActLedCtrlReg |= uiActLedCtrl; //Restore the active bits of LED0, LED1, LED2
+        uiLinkLedCtrlReg |= uiLinkLedCtrl; //Restore the link speed bits of LED0, LED1, LED2
+	} else {
+		uiActLedCtrl = uiActLedCtrlReg & 0x0070; //Backup the active bits of LED0, LED1, LED2
+		uiLinkLedCtrl = uiLinkLedCtrlReg & 0x0777; //Backup the link speed bits of LED0, LED1, LED2
+		uiActLedCtrlReg &= ~(0x0070); //Disable LED0, LED1, LED2
+        uiLinkLedCtrlReg &= ~(0x0777); //Disable LED0, LED1, LED2
+	}
+
+    e1000_write_phy_reg(hw, 26, uiActLedCtrlReg );
+    e1000_write_phy_reg(hw, 28, uiLinkLedCtrlReg );
+	e1000_write_phy_reg(hw, 31, 0x0000);
+#endif
+}
+EXPORT_SYMBOL(e1000_syno_led_switch);
+#endif /*MY_ABC_HERE*/
+
 /**
  * e1000_init_module - Driver Registration Routine
  *
@@ -736,6 +779,11 @@ static void e1000_dump_eeprom(struct e1000_adapter *adapter)
 	int i;
 	u16 csum_old, csum_new = 0;
 
+#ifdef CONFIG_ARCH_GEN3
+	if (adapter->hw.mac_type == e1000_ce4100)
+		eeprom.len = EEPROM_CE4100_FAKE_LENGTH;
+	else
+#endif
 	eeprom.len = ops->get_eeprom_len(netdev);
 	eeprom.offset = 0;
 
@@ -2435,14 +2483,44 @@ static void e1000_watchdog(struct work_struct *work)
 	struct e1000_tx_ring *txdr = adapter->tx_ring;
 	u32 link, tctl;
 
+#ifdef CONFIG_ARCH_GEN3
+	u16 link_up;
+	s32 ret_val;
+#endif
 	if (test_bit(__E1000_DOWN, &adapter->flags))
 		return;
 
 	mutex_lock(&adapter->mutex);
+#ifdef CONFIG_ARCH_GEN3
+   /*
+    * Test the PHY for link status on Intel CE SoC MAC.
+    * If the link status is different than the last link status stored
+    * in the adapter->hw structure, then set hw->get_link_status = 1
+    */
+	ret_val = e1000_read_phy_reg(&adapter->hw, PHY_STATUS, &link_up);
+	ret_val = e1000_read_phy_reg(&adapter->hw, PHY_STATUS, &link_up);
+    if (ret_val)
+		pr_info("Link status detection from PHY failed!\n");
+
+	link_up = ((link_up & MII_SR_LINK_STATUS) != 0);
+	if(link_up != adapter->hw.cegbe_is_link_up)
+		adapter->hw.get_link_status = true;
+	else
+		adapter->hw.get_link_status = false;
+#endif
 	link = e1000_has_link(adapter);
 	if ((netif_carrier_ok(netdev)) && link)
 		goto link_up;
 
+#ifdef CONFIG_ARCH_GEN3
+	if (hw->mac_type == e1000_ce4100) {
+		ret_val = e1000_read_phy_reg(&adapter->hw, PHY_STATUS, &link_up);
+		ret_val = e1000_read_phy_reg(&adapter->hw, PHY_STATUS, &link_up);
+		if (ret_val)
+			pr_info("Link status detection from PHY failed!\n");
+		link = ((link_up & MII_SR_LINK_STATUS) != 0);
+	}
+#endif
 	if (link) {
 		if (!netif_carrier_ok(netdev)) {
 			u32 ctrl;
@@ -4790,6 +4868,51 @@ static int __e1000_shutdown(struct pci_dev *pdev, bool *enable_wake)
 	if (adapter->en_mng_pt)
 		*enable_wake = true;
 
+#ifdef CONFIG_ARCH_GEN3
+	/* enable WoL on the 8211E PHY */
+	if (*enable_wake == true) {
+		if (hw->phy_type == e1000_phy_8211e) {
+			u16 phy_wol = 0;
+			if (adapter->wol & E1000_WUFC_EX)
+				phy_wol |= 0x0400;
+			if (adapter->wol & E1000_WUFC_MC)
+				phy_wol |= 0x0200;
+			if (adapter->wol & E1000_WUFC_BC)
+				phy_wol |= 0x0100;
+			if (adapter->wol & E1000_WUFC_MAG)
+				phy_wol |= 0x1000;
+
+			/* Enable WoL for selected modes */
+			e1000_write_phy_reg(hw, 31, 0x0007);
+#ifdef MY_DEF_HERE
+			udelay(10);
+#endif
+			e1000_write_phy_reg(hw, 30, 0x006d);
+#ifdef MY_DEF_HERE
+			udelay(10);
+#endif
+			e1000_write_phy_reg(hw, 22, 0x9fff);
+#ifdef MY_DEF_HERE
+			udelay(10);
+#endif
+			e1000_write_phy_reg(hw, 21, (u16) phy_wol);
+#ifdef MY_DEF_HERE
+			udelay(10);
+#endif
+
+			/* Disable GMII/RGMII pad for power saving */
+			/* FIXME: for the S5 -> S0 wake to work, the BIOS
+			   needs to re-enable it */
+			// e1000_write_phy_reg(hw, 25, 0x0001);
+
+			/* Back to Page 0 */
+			e1000_write_phy_reg(hw, 31, 0x0000);
+			msleep(10);
+			e1000_phy_reset(hw);
+		}
+	}
+#endif
+
 	if (netif_running(netdev))
 		e1000_free_irq(adapter);
 
@@ -4847,6 +4970,26 @@ static int e1000_resume(struct pci_dev *pdev)
 		if (err)
 			return err;
 	}
+
+#ifdef CONFIG_ARCH_GEN3
+	/* disable WoL on the 8211E PHY */
+	if (hw->phy_type == e1000_phy_8211e) {
+
+		/* Disable WoL for selected modes */
+		e1000_write_phy_reg(hw, 31, 0x0007);
+		e1000_write_phy_reg(hw, 30, 0x006d);
+		e1000_write_phy_reg(hw, 22, 0x9fff);
+		e1000_write_phy_reg(hw, 21, 0x0000);
+
+		/* Reenable GMII/RGMII pad in case it was disabled */
+		// e1000_write_phy_reg(hw, 25, 0x0001);
+
+		/* Back to Page 0 */
+		e1000_write_phy_reg(hw, 31, 0x0000);
+		msleep(10);
+		e1000_phy_reset(hw);
+	}
+#endif
 
 	e1000_power_up_phy(adapter);
 	e1000_reset(adapter);

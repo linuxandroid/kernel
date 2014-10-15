@@ -136,10 +136,29 @@ ipv4_connected:
 		if (!sk->sk_bound_dev_if && (addr_type & IPV6_ADDR_MULTICAST))
 			sk->sk_bound_dev_if = np->mcast_oif;
 
+		if (!sk->sk_bound_dev_if) {
+		}
 		/* Connect to link-local address requires an interface */
 		if (!sk->sk_bound_dev_if) {
+#ifdef MY_ABC_HERE
+			unsigned flags;
+			struct net_device *dev = NULL;
+			for_each_netdev(sock_net(sk), dev) {
+				flags = dev_get_flags(dev);
+				if((flags & IFF_RUNNING) && 
+				 !(flags & (IFF_LOOPBACK | IFF_SLAVE))) {
+					sk->sk_bound_dev_if = dev->ifindex;
+					break;
+				}
+			}
+			if(!sk->sk_bound_dev_if) {
+				err = -EINVAL;
+				goto out;
+			}
+#else
 			err = -EINVAL;
 			goto out;
+#endif
 		}
 	}
 

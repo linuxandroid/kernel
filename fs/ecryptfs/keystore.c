@@ -46,6 +46,9 @@ static int process_request_key_err(long err_code)
 
 	switch (err_code) {
 	case -ENOKEY:
+#ifdef MY_ABC_HERE
+		if (printk_ratelimit())
+#endif
 		ecryptfs_printk(KERN_WARNING, "No key\n");
 		rc = -ENOENT;
 		break;
@@ -646,6 +649,9 @@ ecryptfs_write_tag_70_packet(char *dest, size_t *remaining_bytes,
 		printk(KERN_ERR "%s: Error attempting to find auth tok for "
 		       "fnek sig [%s]; rc = [%d]\n", __func__,
 		       mount_crypt_stat->global_default_fnek_sig, rc);
+#ifdef MY_ABC_HERE
+		mount_crypt_stat->flags |= ECRYPTFS_SYNO_ERROR_REPORT;
+#endif
 		goto out;
 	}
 	rc = ecryptfs_get_tfm_and_mutex_for_cipher_name(
@@ -990,9 +996,15 @@ ecryptfs_parse_tag_70_packet(char **filename, size_t *filename_size,
 					    &s->auth_tok, mount_crypt_stat,
 					    s->fnek_sig_hex);
 	if (rc) {
+#ifdef MY_ABC_HERE
+		if (printk_ratelimit())
+#endif
 		printk(KERN_ERR "%s: Error attempting to find auth tok for "
 		       "fnek sig [%s]; rc = [%d]\n", __func__, s->fnek_sig_hex,
 		       rc);
+#ifdef MY_ABC_HERE
+		mount_crypt_stat->flags |= ECRYPTFS_SYNO_ERROR_REPORT;
+#endif
 		goto out;
 	}
 	rc = ecryptfs_get_tfm_and_mutex_for_cipher_name(&s->desc.tfm,
@@ -1637,6 +1649,9 @@ int ecryptfs_keyring_auth_tok_for_sig(struct key **auth_tok_key,
 	if (!(*auth_tok_key) || IS_ERR(*auth_tok_key)) {
 		(*auth_tok_key) = ecryptfs_get_encrypted_key(sig);
 		if (!(*auth_tok_key) || IS_ERR(*auth_tok_key)) {
+#ifdef MY_ABC_HERE
+			if (printk_ratelimit())
+#endif
 			printk(KERN_ERR "Could not find key with description: [%s]\n",
 			      sig);
 			rc = process_request_key_err(PTR_ERR(*auth_tok_key));

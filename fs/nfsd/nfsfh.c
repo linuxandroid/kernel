@@ -14,6 +14,10 @@
 #include "vfs.h"
 #include "auth.h"
 
+#ifdef CONFIG_FS_SYNO_ACL
+#include "../synoacl_int.h"
+#endif
+
 #define NFSDDBG_FACILITY		NFSDDBG_FH
 
 
@@ -38,6 +42,11 @@ static int nfsd_acceptable(void *expv, struct dentry *dentry)
 		/* make sure parents give x permission to user */
 		int err;
 		parent = dget_parent(tdentry);
+#ifdef CONFIG_FS_SYNO_ACL
+		if (IS_SYNOACL(parent)) {
+			err = synoacl_op_perm(parent, MAY_EXEC);
+		} else 
+#endif /* CONFIG_FS_SYNO_ACL */
 		err = inode_permission(parent->d_inode, MAY_EXEC);
 		if (err < 0) {
 			dput(parent);
@@ -59,7 +68,7 @@ static int nfsd_acceptable(void *expv, struct dentry *dentry)
  * the write call).
  */
 static inline __be32
-nfsd_mode_check(struct svc_rqst *rqstp, umode_t mode, int requested)
+nfsd_mode_check(struct svc_rqst *rqstp, umode_t mode, umode_t requested)
 {
 	mode &= S_IFMT;
 
@@ -265,6 +274,19 @@ out:
 	return error;
 }
 
+#ifdef CONFIG_FS_SYNO_ACL
+static int CheckPermInFileSystem(int access)
+{
+	if (access & NFSD_MAY_SATTR) {
+		return 1;
+	} else if ((NFSD_MAY_CREATE == access) || (NFSD_MAY_REMOVE == access)) {
+		return 1;
+	}
+
+	return 0;
+}
+#endif //CONFIG_FS_SYNO_ACL
+
 /**
  * fh_verify - filehandle lookup and access checking
  * @rqstp: pointer to current rpc request
@@ -293,7 +315,7 @@ out:
  * include/linux/nfsd/nfsd.h.
  */
 __be32
-fh_verify(struct svc_rqst *rqstp, struct svc_fh *fhp, int type, int access)
+fh_verify(struct svc_rqst *rqstp, struct svc_fh *fhp, umode_t type, int access)
 {
 	struct svc_export *exp;
 	struct dentry	*dentry;
@@ -358,6 +380,11 @@ fh_verify(struct svc_rqst *rqstp, struct svc_fh *fhp, int type, int access)
 
 skip_pseudoflavor_check:
 	/* Finally, check access permissions. */
+#ifdef CONFIG_FS_SYNO_ACL
+	if (IS_SYNOACL(dentry) && CheckPermInFileSystem(access)) {
+		access |= NFSD_MAY_SYNO_NOP;
+	}
+#endif
 	error = nfsd_permission(rqstp, exp, dentry, access);
 
 	if (error) {

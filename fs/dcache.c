@@ -1300,6 +1300,10 @@ void d_set_d_op(struct dentry *dentry, const struct dentry_operations *op)
 		dentry->d_flags |= DCACHE_OP_HASH;
 	if (op->d_compare)
 		dentry->d_flags |= DCACHE_OP_COMPARE;
+#ifdef MY_ABC_HERE
+	if (op->d_compare_case)
+		dentry->d_flags |= DCACHE_OP_COMPARE_CASE;
+#endif
 	if (op->d_revalidate)
 		dentry->d_flags |= DCACHE_OP_REVALIDATE;
 	if (op->d_delete)
@@ -1696,8 +1700,13 @@ EXPORT_SYMBOL(d_add_ci);
  * child is looked up. Thus, an interlocking stepping of sequence lock checks
  * is formed, giving integrity down the path walk.
  */
+#ifdef MY_ABC_HERE
+struct dentry *__d_lookup_rcu(struct dentry *parent, struct qstr *name,
+				unsigned *seq, struct inode **inode, int caseless)
+#else
 struct dentry *__d_lookup_rcu(struct dentry *parent, struct qstr *name,
 				unsigned *seq, struct inode **inode)
+#endif
 {
 	unsigned int len = name->len;
 	unsigned int hash = name->hash;
@@ -1705,6 +1714,9 @@ struct dentry *__d_lookup_rcu(struct dentry *parent, struct qstr *name,
 	struct hlist_bl_head *b = d_hash(parent, hash);
 	struct hlist_bl_node *node;
 	struct dentry *dentry;
+#ifdef MY_ABC_HERE
+	struct dentry *found = NULL;
+#endif
 
 	/*
 	 * Note: There is significant duplication with __d_lookup_rcu which is
@@ -1752,6 +1764,28 @@ seqretry:
 		 */
 		if (read_seqcount_retry(&dentry->d_seq, *seq))
 			goto seqretry;
+#ifdef MY_ABC_HERE
+		if (likely(parent->d_flags & DCACHE_OP_COMPARE_CASE)) {
+			if (parent->d_op->d_compare_case(parent, *inode, dentry, i, tlen, tname, name, caseless))
+				continue;
+			/* In caseless case, we should backup first dentry which be founded.
+			 * We backup it to "found". If all inode of founded dentries is NULL,
+			 * we can return it.
+			*/
+			if (caseless){
+				if (!i) {
+					/* inode is null means file not in disk.
+					 * we return the dentry and don't do real_lookup.
+					*/
+					if (!found) {
+						*inode = NULL;
+						found = dentry;
+					}
+					continue;
+				}
+			}
+		} else
+#endif
 		if (unlikely(parent->d_flags & DCACHE_OP_COMPARE)) {
 			if (parent->d_op->d_compare(parent, *inode,
 						dentry, i,
@@ -1770,7 +1804,11 @@ seqretry:
 		*inode = i;
 		return dentry;
 	}
+#ifdef MY_ABC_HERE
+	return found;
+#else
 	return NULL;
+#endif
 }
 
 /**
@@ -1791,13 +1829,43 @@ struct dentry *d_lookup(struct dentry *parent, struct qstr *name)
 
         do {
                 seq = read_seqbegin(&rename_lock);
+#ifdef MY_ABC_HERE
+                dentry = __d_lookup(parent, name, 0);
+#else
                 dentry = __d_lookup(parent, name);
+#endif
                 if (dentry)
 			break;
 	} while (read_seqretry(&rename_lock, seq));
 	return dentry;
 }
 EXPORT_SYMBOL(d_lookup);
+
+#ifdef MY_ABC_HERE
+/**
+ * d_lookup - search for a dentry
+ * @parent: parent dentry
+ * @name: qstr of name we wish to find 
+ * @caseless: caseless or not 
+ * Returns: dentry, or NULL
+ *
+ * Copy from d_lookup().
+ */
+struct dentry *d_lookup_case(struct dentry *parent, struct qstr *name, int caseless)
+{
+	struct dentry *dentry;
+	unsigned seq;
+
+        do {
+                seq = read_seqbegin(&rename_lock);
+                dentry = __d_lookup(parent, name, caseless);
+                if (dentry)
+			break;
+	} while (read_seqretry(&rename_lock, seq));
+	return dentry;
+}
+EXPORT_SYMBOL(d_lookup_case);
+#endif
 
 /**
  * __d_lookup - search for a dentry (racy)
@@ -1814,7 +1882,11 @@ EXPORT_SYMBOL(d_lookup);
  *
  * __d_lookup callers must be commented.
  */
+#ifdef MY_ABC_HERE
+struct dentry *__d_lookup(struct dentry *parent, struct qstr *name, int caseless)
+#else
 struct dentry *__d_lookup(struct dentry *parent, struct qstr *name)
+#endif
 {
 	unsigned int len = name->len;
 	unsigned int hash = name->hash;
@@ -1823,6 +1895,9 @@ struct dentry *__d_lookup(struct dentry *parent, struct qstr *name)
 	struct hlist_bl_node *node;
 	struct dentry *found = NULL;
 	struct dentry *dentry;
+#ifdef MY_ABC_HERE
+	int lockFound = 0;
+#endif
 
 	/*
 	 * Note: There is significant duplication with __d_lookup_rcu which is
@@ -1865,6 +1940,35 @@ struct dentry *__d_lookup(struct dentry *parent, struct qstr *name)
 		 */
 		tlen = dentry->d_name.len;
 		tname = dentry->d_name.name;
+#ifdef MY_ABC_HERE
+		if (parent->d_flags & DCACHE_OP_COMPARE_CASE) {
+			if (parent->d_op->d_compare_case(parent, parent->d_inode,
+						dentry, dentry->d_inode,
+						tlen, tname, name, caseless))
+				goto next;
+			/* In caseless case, we should backup first dentry which be founded.
+			 * We backup it to "found". If all inode of founded dentries is NULL,
+			 * we can return it.
+			*/
+			if (caseless) {
+				if (!dentry->d_inode) {
+					/* inode is null means file not in disk.
+					 * we return the dentry and don't do real_lookup.
+					*/
+					if (!found) {
+						dentry->d_count++;
+						found = dentry;
+						lockFound = 1;
+						/* Continue here, so "found" is still locked.
+						* We will unlocked it before return or before replace "found".
+						*/
+						continue;
+					}
+					goto next;
+				}
+			}
+		} else
+#endif
 		if (parent->d_flags & DCACHE_OP_COMPARE) {
 			if (parent->d_op->d_compare(parent, parent->d_inode,
 						dentry, dentry->d_inode,
@@ -1874,6 +1978,14 @@ struct dentry *__d_lookup(struct dentry *parent, struct qstr *name)
 			if (dentry_cmp(tname, tlen, str, len))
 				goto next;
 		}
+#ifdef MY_ABC_HERE
+		// make sure "found" is unlocked
+		if (lockFound) {
+			found->d_count--;
+			spin_unlock(&found->d_lock);
+			lockFound = 0;
+		}
+#endif
 
 		dentry->d_count++;
 		found = dentry;
@@ -1882,6 +1994,12 @@ struct dentry *__d_lookup(struct dentry *parent, struct qstr *name)
 next:
 		spin_unlock(&dentry->d_lock);
  	}
+#ifdef MY_ABC_HERE
+	// make sure "found" is unlocked
+	if (lockFound) {
+		spin_unlock(&found->d_lock);
+	}
+#endif
  	rcu_read_unlock();
 
  	return found;

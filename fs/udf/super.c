@@ -139,7 +139,6 @@ static struct inode *udf_alloc_inode(struct super_block *sb)
 static void udf_i_callback(struct rcu_head *head)
 {
 	struct inode *inode = container_of(head, struct inode, i_rcu);
-	INIT_LIST_HEAD(&inode->i_dentry);
 	kmem_cache_free(udf_inode_cachep, UDF_I(inode));
 }
 
@@ -170,6 +169,11 @@ static int init_inodecache(void)
 
 static void destroy_inodecache(void)
 {
+	/*
+	 * Make sure all delayed rcu free inodes are flushed before we
+	 * destroy cache.
+	 */
+	rcu_barrier();
 	kmem_cache_destroy(udf_inode_cachep);
 }
 
@@ -368,6 +372,9 @@ enum {
 	Opt_rootdir, Opt_utf8, Opt_iocharset,
 	Opt_err, Opt_uforget, Opt_uignore, Opt_gforget, Opt_gignore,
 	Opt_fmode, Opt_dmode
+#ifdef MY_ABC_HERE
+	, Opt_synocase
+#endif
 };
 
 static const match_table_t tokens = {
@@ -398,6 +405,9 @@ static const match_table_t tokens = {
 	{Opt_iocharset,	"iocharset=%s"},
 	{Opt_fmode,     "mode=%o"},
 	{Opt_dmode,     "dmode=%o"},
+#ifdef MY_ABC_HERE
+	{Opt_synocase,     "casesensitive"},
+#endif
 	{Opt_err,	NULL}
 };
 
@@ -416,6 +426,9 @@ static int udf_parse_options(char *options, struct udf_options *uopt,
 	uopt->rootdir = 0xFFFFFFFF;
 	uopt->fileset = 0xFFFFFFFF;
 	uopt->nls_map = NULL;
+#ifdef MY_ABC_HERE
+	uopt->flags |= (1 << SYNO_UDF_FLAG_FORCE_CASELESS);
+#endif
 
 	if (!options)
 		return 1;
@@ -545,6 +558,11 @@ static int udf_parse_options(char *options, struct udf_options *uopt,
 				return 0;
 			uopt->dmode = option & 0777;
 			break;
+#ifdef MY_ABC_HERE
+		case Opt_synocase:
+			uopt->flags &= ~(1 << SYNO_UDF_FLAG_FORCE_CASELESS);
+			break;
+#endif
 		default:
 			pr_err("bad mount option \"%s\" or missing value\n", p);
 			return 0;

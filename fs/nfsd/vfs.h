@@ -26,6 +26,10 @@
 #define NFSD_MAY_NOT_BREAK_LEASE	0x200
 #define NFSD_MAY_BYPASS_GSS		0x400
 #define NFSD_MAY_READ_IF_EXEC		0x800
+#ifdef CONFIG_FS_SYNO_ACL
+#define NFSD_MAY_APPEND			0x1000
+#define NFSD_MAY_SYNO_NOP		0x2000
+#endif
 
 #define NFSD_MAY_CREATE		(NFSD_MAY_EXEC|NFSD_MAY_WRITE)
 #define NFSD_MAY_REMOVE		(NFSD_MAY_EXEC|NFSD_MAY_WRITE|NFSD_MAY_TRUNC)
@@ -66,7 +70,7 @@ __be32		do_nfsd_create(struct svc_rqst *, struct svc_fh *,
 __be32		nfsd_commit(struct svc_rqst *, struct svc_fh *,
 				loff_t, unsigned long);
 #endif /* CONFIG_NFSD_V3 */
-__be32		nfsd_open(struct svc_rqst *, struct svc_fh *, int,
+__be32		nfsd_open(struct svc_rqst *, struct svc_fh *, umode_t,
 				int, struct file **);
 void		nfsd_close(struct file *);
 __be32 		nfsd_read(struct svc_rqst *, struct svc_fh *,

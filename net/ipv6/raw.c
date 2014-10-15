@@ -273,9 +273,26 @@ static int rawv6_bind(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 				sk->sk_bound_dev_if = addr->sin6_scope_id;
 			}
 
+#ifdef MY_ABC_HERE
+			if (!sk->sk_bound_dev_if) {
+				unsigned flags;
+				for_each_netdev(sock_net(sk), dev) {
+					flags = dev_get_flags(dev);
+					if((flags & IFF_RUNNING) && 
+					 !(flags & (IFF_LOOPBACK | IFF_SLAVE))) {
+						sk->sk_bound_dev_if = dev->ifindex;
+						break;
+					}
+				}
+				if(!sk->sk_bound_dev_if) {
+					goto out_unlock;
+				}
+			}
+#else
 			/* Binding to link-local address requires an interface */
 			if (!sk->sk_bound_dev_if)
 				goto out_unlock;
+#endif
 
 			err = -ENODEV;
 			dev = dev_get_by_index_rcu(sock_net(sk),

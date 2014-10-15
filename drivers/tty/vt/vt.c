@@ -2474,6 +2474,7 @@ int vt_kmsg_redirect(int new)
 		return kmsg_con;
 }
 
+#ifndef MY_ABC_HERE
 /*
  *	Console on virtual terminal
  *
@@ -2571,7 +2572,9 @@ static void vt_console_print(struct console *co, const char *b, unsigned count)
 quit:
 	spin_unlock(&printing_lock);
 }
+#endif
 
+#ifndef MY_ABC_HERE
 static struct tty_driver *vt_console_device(struct console *c, int *index)
 {
 	*index = c->index ? c->index-1 : fg_console;
@@ -2586,6 +2589,7 @@ static struct console vt_console_driver = {
 	.flags		= CON_PRINTBUFFER,
 	.index		= -1,
 };
+#endif
 #endif
 
 /*
@@ -2938,8 +2942,10 @@ static int __init con_init(void)
 
 	console_unlock();
 
+#ifndef MY_ABC_HERE
 #ifdef CONFIG_VT_CONSOLE
 	register_console(&vt_console_driver);
+#endif
 #endif
 	return 0;
 }

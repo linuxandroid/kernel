@@ -264,7 +264,7 @@ static int msdos_add_entry(struct inode *dir, const unsigned char *name,
 }
 
 /***** Create a file */
-static int msdos_create(struct inode *dir, struct dentry *dentry, int mode,
+static int msdos_create(struct inode *dir, struct dentry *dentry, umode_t mode,
 			struct nameidata *nd)
 {
 	struct super_block *sb = dir->i_sb;
@@ -346,7 +346,7 @@ out:
 }
 
 /***** Make a directory */
-static int msdos_mkdir(struct inode *dir, struct dentry *dentry, int mode)
+static int msdos_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 {
 	struct super_block *sb = dir->i_sb;
 	struct fat_slot_info sinfo;
@@ -600,6 +600,9 @@ error_inode:
 		fat_fs_error(new_dir->i_sb,
 			     "%s: Filesystem corrupted (i_pos %lld)",
 			     __func__, sinfo.i_pos);
+#ifdef MY_ABC_HERE
+		err = -ECORRUPT;
+#endif
 	}
 	goto out;
 }

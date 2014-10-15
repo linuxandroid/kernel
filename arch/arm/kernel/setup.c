@@ -59,8 +59,79 @@
 #include "atags.h"
 #include "tcm.h"
 
+
+#ifdef  MY_ABC_HERE
+extern char gszSynoHWVersion[];
+#endif
+
+#ifdef  MY_ABC_HERE
+extern char gszSynoHWRevision[];
+#endif
+
+#ifdef MY_ABC_HERE
+extern long g_internal_hd_num;
+#endif
+
+#ifdef MY_ABC_HERE
+extern long g_internal_netif_num;
+long g_egiga = 1;
+#endif
+
+#ifdef MY_ABC_HERE
+extern long g_sata_led_special;
+#endif
+
+#ifdef MY_ABC_HERE
+extern long g_hdd_hotplug;
+#endif
+
+#ifdef MY_ABC_HERE
+extern unsigned char grgbLanMac[4][16];
+#endif
+
+#ifdef MY_ABC_HERE
+extern char gszSerialNum[32];
+extern char gszCustomSerialNum[32];
+#endif
+
+#ifdef MY_DEF_HERE
+extern long g_esata_7042;
+#endif
 #ifndef MEM_SIZE
 #define MEM_SIZE	(16*1024*1024)
+#endif
+
+#ifdef MY_ABC_HERE
+extern char gszDiskIdxMap[16];
+#endif
+
+#ifdef MY_ABC_HERE
+extern char giDiskSeqReverse[8];
+#endif
+
+#ifdef MY_ABC_HERE
+extern unsigned int gSwitchDev;
+extern char gDevPCIName[SYNO_MAX_SWITCHABLE_NET_DEVICE][SYNO_NET_DEVICE_ENCODING_LENGTH];
+#endif
+
+#ifdef MY_ABC_HERE
+extern int gSynoHasDynModule;
+#endif
+
+#ifdef MY_DEF_HERE
+extern long gSynoFlashMemorySize;
+#endif
+
+#ifdef MY_ABC_HERE
+extern int gSynoFactoryUSBFastReset;
+#endif
+
+#ifdef MY_ABC_HERE
+extern int gSynoFactoryUSB3Disable;
+#endif
+
+#ifdef MY_ABC_HERE
+extern int gSynoNoEhci;
 #endif
 
 #if defined(CONFIG_FPE_NWFPE) || defined(CONFIG_FPE_FASTFPE)
@@ -73,6 +144,330 @@ static int __init fpe_setup(char *line)
 }
 
 __setup("fpe=", fpe_setup);
+#endif
+
+
+
+#ifdef MY_ABC_HERE
+static int __init early_hw_version(char *p)
+{
+	char *szPtr;
+
+	snprintf(gszSynoHWVersion, 16, "%s", p);
+
+	szPtr = gszSynoHWVersion;
+	while ((*szPtr != ' ') && (*szPtr != '\t') && (*szPtr != '\0')) {
+		szPtr++;
+	}
+	*szPtr = 0;
+	strcat(gszSynoHWVersion, "-j");
+
+	printk("Synology Hardware Version: %s\n", gszSynoHWVersion);
+
+	return 1;
+}
+__setup("syno_hw_version=", early_hw_version);
+#endif
+
+#ifdef MY_ABC_HERE
+static int __init early_hw_revision(char *p)
+{
+       snprintf(gszSynoHWRevision, 4, "%s", p);
+
+       printk("Synology Hardware Revision: %s\n", gszSynoHWRevision);
+
+       return 1;
+}
+__setup("rev=", early_hw_revision);
+#endif
+
+#ifdef MY_ABC_HERE
+static int __init early_internal_hd_num(char *p)
+{
+	g_internal_hd_num = simple_strtol(p, NULL, 10);
+
+	printk("Internal HD num: %d\n", (int)g_internal_hd_num);
+
+	return 1;
+}
+__setup("ihd_num=", early_internal_hd_num);
+#endif
+
+#ifdef  MY_ABC_HERE
+static int __init early_internal_netif_num(char *p)
+{
+	g_internal_netif_num = simple_strtol(p, NULL, 10);
+
+	if ( g_internal_netif_num >= 0 ) {
+		printk("Internal netif num: %d\n", (int)g_internal_netif_num);
+	}
+
+	return 1;
+}
+__setup("netif_num=", early_internal_netif_num);
+
+static void __init early_egiga(char *p)
+{
+	g_egiga = simple_strtol(p, NULL, 10);
+
+	if ( g_egiga == 0 ) {
+		printk("egiga port is disabled\n");
+	}
+}
+__setup("egiga=", early_egiga);
+#endif
+
+#ifdef MY_ABC_HERE
+static int __init early_sataled_special(char *p)
+{
+        g_sata_led_special = simple_strtol(p, NULL, 10);
+
+        if ( g_sata_led_special >= 0 ) {
+                printk("Special Sata LEDs.\n");
+        }
+
+        return 1;
+}
+__setup("SataLedSpecial=", early_sataled_special);
+#endif
+
+#ifdef MY_ABC_HERE
+static int __init early_hdd_hotplug(char *p)
+{
+	g_hdd_hotplug = simple_strtol(p, NULL, 10);
+
+	if ( g_hdd_hotplug > 0 ) {
+		printk("Support HDD Hotplug.\n");
+	}
+
+	return 1;
+}
+__setup("HddHotplug=", early_hdd_hotplug);
+#endif
+
+#ifdef MY_ABC_HERE
+static int __init early_mac1(char *p)
+{
+	snprintf(grgbLanMac[0], sizeof(grgbLanMac[0]), "%s", p);
+
+	printk("Mac1: %s\n", grgbLanMac[0]);
+
+	return 1;
+}
+__setup("mac1=", early_mac1);
+
+static int __init early_mac2(char *p)
+{
+	snprintf(grgbLanMac[1], sizeof(grgbLanMac[1]), "%s", p);
+
+	printk("Mac2: %s\n", grgbLanMac[1]);
+
+	return 1;
+}
+__setup("mac2=", early_mac2);
+
+static int __init early_mac3(char *p)
+{
+	snprintf(grgbLanMac[2], sizeof(grgbLanMac[2]), "%s", p);
+
+	printk("Mac3: %s\n", grgbLanMac[2]);
+
+	return 1;
+}
+__setup("mac3=", early_mac3);
+
+static int __init early_mac4(char *p)
+{
+	snprintf(grgbLanMac[3], sizeof(grgbLanMac[3]), "%s", p);
+
+	printk("Mac4: %s\n", grgbLanMac[3]);
+
+	return 1;
+}
+__setup("mac4=", early_mac4);
+#endif
+
+#ifdef MY_ABC_HERE
+static int __init early_netif_seq(char *p)
+{
+	int len;
+	int netDevCount;
+
+	// no net device switch required
+	if ((NULL == p) || (0 == (len = strlen(p)))) {
+		return 1;
+	}
+
+	/**
+	 *	We change the way that we represent the net device name is due to a truth that
+	 *	when a PCIE extension card is plugged in, the pcie name will change
+	 *	So we give up the pci-name as our matching condition, we use NIC up sequence instead.
+	 *	Because the NIC layout is fixed on our board, we the NIC up sequence won't change.
+	 *	And according to this sequence, we assign the device name to NIC
+	 *
+	 *	Following codes are designed to compatible with bromolow/x64 which has already been produced.
+	 *	Based on the truth that our bromolow/x64 has at least 2 internal lan so far (2011/5/24)
+	 *	And 2 internal lan needs netif_seq whose length is 12
+	 *	So we judge that if netif_seq is less than 12, then it should be new version of netif_seq
+	 *	2411+ has 2 internal lans now so we use 12 as our boundary condition
+	 */
+	if (len <= SYNO_MAX_SWITCHABLE_NET_DEVICE) {
+		netDevCount = len;
+		for(gSwitchDev = 0 ; gSwitchDev < netDevCount && gSwitchDev < SYNO_MAX_SWITCHABLE_NET_DEVICE ; gSwitchDev++) {
+			gDevPCIName[gSwitchDev][0] = *p++;
+		}
+		return 1;
+	}
+
+	netDevCount = len/SYNO_NET_DEVICE_ENCODING_LENGTH;
+	if (0 == netDevCount) {
+		return 1;
+	}
+
+	for(gSwitchDev = 0 ; gSwitchDev < netDevCount && gSwitchDev < SYNO_MAX_SWITCHABLE_NET_DEVICE ; gSwitchDev++) {
+		// the format of netif_seq string is device seq (1 character) + device pci name (last 5 characters only)
+		memcpy(gDevPCIName[gSwitchDev], p, SYNO_NET_DEVICE_ENCODING_LENGTH);
+		p += SYNO_NET_DEVICE_ENCODING_LENGTH;
+	}
+	return 1;
+}
+
+__setup("netif_seq=",early_netif_seq);
+#endif
+
+#ifdef MY_ABC_HERE
+static int __init early_sn(char *p)
+{
+        snprintf(gszSerialNum, sizeof(gszSerialNum), "%s", p);
+        printk("Serial Number: %s\n", gszSerialNum);
+        return 1;
+}
+__setup("sn=", early_sn);
+
+static int __init early_custom_sn(char *p)
+{
+        snprintf(gszCustomSerialNum, sizeof(gszCustomSerialNum), "%s", p);
+        printk("Custom Serial Number: %s\n", gszCustomSerialNum);
+        return 1;
+}
+__setup("custom_sn=", early_custom_sn);
+#endif
+
+#ifdef MY_DEF_HERE
+static int __init early_esata_7042(char *p)
+{
+	g_esata_7042 = simple_strtol(p, NULL, 10);
+
+	printk("Esata chip use 7042: %d\n", (int)g_esata_7042);
+
+	return 1;
+}
+__setup("esata_7042=", early_esata_7042);
+#endif
+
+#ifdef MY_ABC_HERE
+static int __init early_disk_idx_map(char *p)
+{
+	snprintf(gszDiskIdxMap, sizeof(gszDiskIdxMap), "%s", p);
+
+	if('\0' != gszDiskIdxMap[0]) {
+		printk("Disk Index Map: %s\n", gszDiskIdxMap);
+	}
+
+	return 1;
+}
+__setup("DiskIdxMap=", early_disk_idx_map);
+#endif
+
+#ifdef MY_ABC_HERE
+static int __init early_disk_seq_reserve(char *p)
+{
+	snprintf(giDiskSeqReverse, sizeof(giDiskSeqReverse), "%s", p);
+
+	if('\0' != giDiskSeqReverse[0]) {
+		printk("Disk Sequence Reverse: %s\n", giDiskSeqReverse);
+	}
+
+	return 1;
+}
+__setup("DiskSeqReverse=", early_disk_seq_reserve);
+#endif
+
+#ifdef MY_ABC_HERE
+static int __init early_is_dyn_module(char *p)
+{
+	int iLen = 0;
+
+	gSynoHasDynModule = 0;
+	
+	if ((NULL == p) || (0 == (iLen = strlen(p)))) {
+		goto END;
+	}
+
+	if ( 0 == strcmp (p, "y")) {
+		gSynoHasDynModule = 1;
+		printk("Synology Dynamic Module support.\n");
+	}
+
+END:
+	return 1;
+}
+__setup("syno_dyn_module=", early_is_dyn_module);
+#endif
+
+#ifdef MY_DEF_HERE
+static int __init early_flash_memory_size(char *p)
+{
+	int iLen = 0;
+
+	if ((NULL == p) || (0 == (iLen = strlen(p)))) {
+		gSynoFlashMemorySize = 4;
+	} else {
+		gSynoFlashMemorySize = simple_strtol(p, NULL, 10);
+	}
+
+	printk("Flash Memory Size: %d MB\n", (int)gSynoFlashMemorySize);
+
+END:
+	return 1;
+}
+__setup("flash_size=", early_flash_memory_size);
+#endif
+
+#ifdef MY_ABC_HERE
+static int __init early_factory_usb_fast_reset(char *p)
+{
+	gSynoFactoryUSBFastReset = simple_strtol(p, NULL, 10);
+
+	printk("Factory USB Fast Reset: %d\n", (int)gSynoFactoryUSBFastReset);
+
+	return 1;
+}
+__setup("syno_usb_fast_reset=", early_factory_usb_fast_reset);
+#endif
+
+#ifdef MY_ABC_HERE
+static int __init early_factory_usb3_disable(char *p)
+{
+	gSynoFactoryUSB3Disable = simple_strtol(p, NULL, 10);
+
+	printk("Factory USB3 Disable: %d\n", (int)gSynoFactoryUSB3Disable);
+
+	return 1;
+}
+__setup("syno_disable_usb3=", early_factory_usb3_disable);
+#endif
+
+#ifdef MY_ABC_HERE
+static int __init early_no_ehci(char *p)
+{
+	gSynoNoEhci = simple_strtol(p, NULL, 10);
+
+	printk("No Ehci: %d\n", gSynoNoEhci);
+
+	return 1;
+}
+__setup("syno_no_ehci=", early_no_ehci);
 #endif
 
 extern void paging_init(struct machine_desc *desc);
@@ -623,11 +1018,19 @@ static void __init request_standard_resources(struct machine_desc *mdesc)
  */
 static int __init parse_tag_core(const struct tag *tag)
 {
+#if defined(CONFIG_SYNO_ARMADA_ARCH)
+	if (read_tag(tag->hdr.size) > 2) {
+	if ((read_tag(tag->u.core.flags) & 1) == 0)		
+		root_mountflags &= ~MS_RDONLY;
+		ROOT_DEV = old_decode_dev(read_tag(tag->u.core.rootdev));
+	}
+#else
 	if (tag->hdr.size > 2) {
 		if ((tag->u.core.flags & 1) == 0)
 			root_mountflags &= ~MS_RDONLY;
 		ROOT_DEV = old_decode_dev(tag->u.core.rootdev);
 	}
+#endif
 	return 0;
 }
 
@@ -635,10 +1038,42 @@ __tagtable(ATAG_CORE, parse_tag_core);
 
 static int __init parse_tag_mem32(const struct tag *tag)
 {
+#if defined(CONFIG_SYNO_ARMADA_ARCH)
+	return arm_add_memory(read_tag(tag->u.mem.start), read_tag(tag->u.mem.size));
+#else
 	return arm_add_memory(tag->u.mem.start, tag->u.mem.size);
+#endif
 }
 
 __tagtable(ATAG_MEM, parse_tag_mem32);
+
+#if defined(CONFIG_SYNO_ARMADA_ARCH) && defined(CONFIG_PHYS_ADDR_T_64BIT)
+static int __init parse_tag_mem64(const struct tag *tag)
+{
+#ifdef CONFIG_ARM_LPAE
+	/* We might have 4GB on a single CS. */
+	if (tag->u.mem64.size >= 0x100000000ll) {
+		u64 tmp_size = tag->u.mem64.size;
+		phys_addr_t tmp_start = tag->u.mem64.start;
+		u32 blk_size;
+		int ret;
+		while (tmp_size > 0ll) {
+			blk_size = ((tmp_size < 0x100000000ll) ? (u32)tmp_size : (2ll << 30ll));
+			ret = arm_add_memory(tmp_start, blk_size);
+			if (ret)
+				return ret;
+			tmp_start += (u64)blk_size;
+			tmp_size -= (u64)blk_size;
+		}
+		return 0;
+	}
+#endif
+	/* We only use 32-bits for the size. */
+	return arm_add_memory(tag->u.mem64.start, (unsigned long)tag->u.mem64.size);
+}
+
+__tagtable(ATAG_MEM64, parse_tag_mem64);
+#endif /* CONFIG_PHYS_ADDR_T_64BIT */
 
 #if defined(CONFIG_VGA_CONSOLE) || defined(CONFIG_DUMMY_CONSOLE)
 struct screen_info screen_info = {
@@ -688,7 +1123,11 @@ __tagtable(ATAG_SERIAL, parse_tag_serialnr);
 
 static int __init parse_tag_revision(const struct tag *tag)
 {
+#if defined(CONFIG_SYNO_ARMADA_ARCH)
+	system_rev = read_tag(tag->u.revision.rev);
+#else
 	system_rev = tag->u.revision.rev;
+#endif
 	return 0;
 }
 
@@ -722,7 +1161,11 @@ static int __init parse_tag(const struct tag *tag)
 	struct tagtable *t;
 
 	for (t = &__tagtable_begin; t < &__tagtable_end; t++)
+#if defined(CONFIG_SYNO_ARMADA_ARCH)
+		if ((read_tag(tag->hdr.tag) == t->tag)) {
+#else
 		if (tag->hdr.tag == t->tag) {
+#endif
 			t->parse(tag);
 			break;
 		}
@@ -736,9 +1179,17 @@ static int __init parse_tag(const struct tag *tag)
  */
 static void __init parse_tags(const struct tag *t)
 {
+#if defined(CONFIG_SYNO_ARMADA_ARCH)
+	for (; read_tag(t->hdr.size); t = tag_next(t))
+#else
 	for (; t->hdr.size; t = tag_next(t))
+#endif
 		if (!parse_tag(t))
+#if defined(CONFIG_SYNO_ARMADA_ARCH)
+			early_printk(KERN_WARNING
+#else
 			printk(KERN_WARNING
+#endif
 				"Ignoring unrecognised tag 0x%08x\n",
 				t->hdr.tag);
 }
@@ -859,11 +1310,19 @@ static struct machine_desc * __init setup_machine_tags(unsigned int nr)
 	 * If we have the old style parameters, convert them to
 	 * a tag list.
 	 */
+#if defined(CONFIG_SYNO_ARMADA_ARCH)
+if (read_tag(tags->hdr.tag) != ATAG_CORE)
+#else
 	if (tags->hdr.tag != ATAG_CORE)
+#endif
 		convert_to_tag_list(tags);
 #endif
 
+#if defined(CONFIG_SYNO_ARMADA_ARCH)
+	if (read_tag(tags->hdr.tag) != ATAG_CORE) {
+#else
 	if (tags->hdr.tag != ATAG_CORE) {
+#endif
 #if defined(CONFIG_OF)
 		/*
 		 * If CONFIG_OF is set, then assume this is a reasonably
@@ -877,7 +1336,11 @@ static struct machine_desc * __init setup_machine_tags(unsigned int nr)
 	if (mdesc->fixup)
 		mdesc->fixup(tags, &from, &meminfo);
 
+#if defined(CONFIG_SYNO_ARMADA_ARCH)
+	if (read_tag(tags->hdr.tag) == ATAG_CORE) {
+#else
 	if (tags->hdr.tag == ATAG_CORE) {
+#endif
 		if (meminfo.nr_banks != 0)
 			squash_mem_tags(tags);
 		save_atags(tags);
@@ -926,6 +1389,12 @@ void __init setup_arch(char **cmdline_p)
 	arm_memblock_init(&meminfo, mdesc);
 
 	paging_init(mdesc);
+#ifdef CONFIG_DEBUG_LL
+	{
+		extern int ll_debug;
+		ll_debug=1;
+	}
+#endif
 	request_standard_resources(mdesc);
 
 	unflatten_device_tree();

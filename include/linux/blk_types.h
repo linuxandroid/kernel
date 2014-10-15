@@ -95,6 +95,16 @@ struct bio {
 #define BIO_FS_INTEGRITY 9	/* fs owns integrity data, not block layer */
 #define BIO_QUIET	10	/* Make BIO Quiet */
 #define BIO_MAPPED_INTEGRITY 11/* integrity metadata has been remapped */
+#ifdef MY_ABC_HERE
+#define BIO_AUTO_REMAP 12	/* record if auto-remap occurred */
+#endif
+#ifdef MY_ABC_HERE
+/*
+ * Currently, our RAID1 device won't return error on make_reuest() when RAID1 is crashed
+ * So we add this flag to told md layer that is should eturn error for flashcache * devices
+ */
+#define BIO_MD_RETURN_ERROR 13
+#endif
 #define bio_flagged(bio, flag)	((bio)->bi_flags & (1 << (flag)))
 
 /*
@@ -151,6 +161,9 @@ enum rq_flag_bits {
 	__REQ_IO_STAT,		/* account I/O stat */
 	__REQ_MIXED_MERGE,	/* merge of different types, fail separately */
 	__REQ_NR_BITS,		/* stops here */
+#ifdef MY_ABC_HERE
+	__REQ_AUTO_REMAP,       /* auto remap occurred */
+#endif
 };
 
 #define REQ_WRITE		(1 << __REQ_WRITE)
@@ -169,6 +182,10 @@ enum rq_flag_bits {
 	(REQ_WRITE | REQ_FAILFAST_MASK | REQ_SYNC | REQ_META | REQ_PRIO | \
 	 REQ_DISCARD | REQ_NOIDLE | REQ_FLUSH | REQ_FUA | REQ_SECURE)
 #define REQ_CLONE_MASK		REQ_COMMON_MASK
+
+/* This mask is used for both bio and request merge checking */
+#define REQ_NOMERGE_FLAGS \
+	(REQ_NOMERGE | REQ_STARTED | REQ_SOFTBARRIER | REQ_FLUSH | REQ_FUA)
 
 #define REQ_RAHEAD		(1 << __REQ_RAHEAD)
 #define REQ_THROTTLED		(1 << __REQ_THROTTLED)
@@ -191,5 +208,8 @@ enum rq_flag_bits {
 #define REQ_IO_STAT		(1 << __REQ_IO_STAT)
 #define REQ_MIXED_MERGE		(1 << __REQ_MIXED_MERGE)
 #define REQ_SECURE		(1 << __REQ_SECURE)
+#ifdef MY_ABC_HERE
+#define REQ_AUTO_REMAP 		(1 << __REQ_AUTO_REMAP)
+#endif
 
 #endif /* __LINUX_BLK_TYPES_H */

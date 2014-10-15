@@ -243,11 +243,25 @@ const struct file_operations ext4_file_operations = {
 	.release	= ext4_release_file,
 	.fsync		= ext4_sync_file,
 	.splice_read	= generic_file_splice_read,
+#if defined(CONFIG_SYNO_COMCERTO) && defined(CONFIG_COMCERTO_IMPROVED_SPLICE)
+	.splice_write	= comcerto_file_splice_write,
+#else
 	.splice_write	= generic_file_splice_write,
+#endif
+#if defined(CONFIG_SYNO_ARMADA)
+	.splice_from_socket = generic_splice_from_socket,
+#endif
 	.fallocate	= ext4_fallocate,
 };
 
 const struct inode_operations ext4_file_inode_operations = {
+#ifdef MY_ABC_HERE
+	.syno_getattr	= syno_ext4_getattr,
+#endif
+#ifdef MY_ABC_HERE
+	.syno_get_archive_ver = syno_ext4_get_archive_ver,
+	.syno_set_archive_ver = syno_ext4_set_archive_ver,
+#endif
 	.setattr	= ext4_setattr,
 	.getattr	= ext4_getattr,
 #ifdef CONFIG_EXT4_FS_XATTR
