@@ -3032,6 +3032,10 @@ OUT:
 static SYNO_DISK_TYPE syno_disk_type_get(struct device *dev)
 {
 	struct scsi_device *sdp = to_scsi_device(dev);
+#ifdef XPENOLOGY
+   printk(KERN_DEBUG "%s: disk driver '%s'", __FUNCTION__,
+         sdp->host->hostt->name);
+#endif
 
 	// iscsi
 #ifdef MY_ABC_HERE
@@ -3069,12 +3073,21 @@ static SYNO_DISK_TYPE syno_disk_type_get(struct device *dev)
 		}
 #endif
 		// else treat as internal disks
+      printk(KERN_DEBUG "%s: SATA syno_port_type %x\n", __FUNCTION__, 
+            sdp->host->hostt->syno_port_type);
 		return SYNO_DISK_SATA;
 	}
 	// sas disks
 	if (SYNO_PORT_TYPE_SAS == sdp->host->hostt->syno_port_type) {
+      printk(KERN_DEBUG "%s: SAS syno_port_type %x", __FUNCTION__, 
+            sdp->host->hostt->syno_port_type);
 		return SYNO_DISK_SAS;
 	}
+	
+	#ifdef XPENOLOGY
+	   printk(KERN_DEBUG "syno_disk_type_get: Got UNKNOWN port type %x\n", sdp->host->hostt->syno_port_type);
+	#endif 
+	
 	return SYNO_DISK_UNKNOWN;
 }
 #endif
@@ -3226,7 +3239,7 @@ static int sd_probe(struct device *dev)
 #endif
 		// try at most 5 times
 		while (want_idx != index &&
-			(SYNO_DISK_SATA == sdkp->synodisktype) && iRetry < 15) {
+			(SYNO_DISK_SATA == sdkp->synodisktype) && iRetry < 5) {
 			/* Sometimes raid is not release all scsi disk yet. Try to delay and reget */
 			printk("want_idx %d index %d. delay and reget\n", want_idx, index);
 
@@ -3311,6 +3324,8 @@ static int sd_probe(struct device *dev)
 			error = sd_format_disk_name(SYNO_SATA_DEVICE_PREFIX, index, gd->disk_name, DISK_NAME_LEN);
 			break;
 		case SYNO_DISK_USB:
+			error = sd_format_disk_name(SYNO_SATA_DEVICE_PREFIX, index, gd->disk_name, DISK_NAME_LEN);
+			break;
 		default:
 #ifdef SYNO_SAS_DISK_NAME
 			if (1 == g_is_sas_model) {
@@ -3319,6 +3334,10 @@ static int sd_probe(struct device *dev)
 			}
 #endif
 			error = sd_format_disk_name(SYNO_SATA_DEVICE_PREFIX, index, gd->disk_name, DISK_NAME_LEN);
+#ifdef XPENOLOGY
+         	printk(KERN_DEBUG "sd_probe: Got UNKNOWN disk %s with index %x\n", gd->disk_name, index);
+         	gd->systemDisk = 1;
+#endif
 			break;
 	}
 #else

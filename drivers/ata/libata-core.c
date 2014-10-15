@@ -7405,6 +7405,8 @@ EXPORT_SYMBOL_GPL(ata_cable_unknown);
 EXPORT_SYMBOL_GPL(ata_cable_ignore);
 EXPORT_SYMBOL_GPL(ata_cable_sata);
 
+
+#if (defined(MY_DEF_HERE) || defined(XPENOLOGY))
 int (*funcSYNOSendDiskResetPwrEvent)(unsigned int, unsigned int) = NULL;
 EXPORT_SYMBOL(funcSYNOSendDiskResetPwrEvent);
 int (*funcSYNOSendDiskPortDisEvent)(unsigned int, unsigned int) = NULL;
@@ -7413,8 +7415,8 @@ int (*funcSYNOSataErrorReport)(unsigned int, unsigned int, unsigned int, unsigne
 EXPORT_SYMBOL(funcSYNOSataErrorReport);
 int (*funcSYNODeepSleepEvent)(unsigned int, unsigned int) = NULL;
 EXPORT_SYMBOL(funcSYNODeepSleepEvent);
-
-#ifdef MY_DEF_HERE
+int (*funcSYNODiskRetryReport)(unsigned int, unsigned int, unsigned int, unsigned int, unsigned int) = NULL;
+EXPORT_SYMBOL(funcSYNODiskRetryReport);
 int (*funcSYNOSendEboxRefreshEvent)(int portIndex) = NULL;
 EXPORT_SYMBOL(funcSYNOSendEboxRefreshEvent);
 #endif
