@@ -88,6 +88,3 @@ GTAGS
 *.rej
 *~
 \#*#
-!ramdisk/lib/modules/synobios.ko
-!ramdisk/lib/*.so
-!ramdisk/lib64/*.so
