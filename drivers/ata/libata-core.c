@@ -7415,7 +7415,7 @@ int (*funcSYNOSataErrorReport)(unsigned int, unsigned int, unsigned int, unsigne
 EXPORT_SYMBOL(funcSYNOSataErrorReport);
 int (*funcSYNODeepSleepEvent)(unsigned int, unsigned int) = NULL;
 EXPORT_SYMBOL(funcSYNODeepSleepEvent);
-int (*funcSYNODiskRetryReport)(unsigned int, unsigned int, unsigned int, unsigned int, unsigned int) = NULL;
+int (*funcSYNODiskRetryReport)(unsigned int, unsigned int) = NULL;
 EXPORT_SYMBOL(funcSYNODiskRetryReport);
 int (*funcSYNOSendEboxRefreshEvent)(int portIndex) = NULL;
 EXPORT_SYMBOL(funcSYNOSendEboxRefreshEvent);
