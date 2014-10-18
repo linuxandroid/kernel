@@ -584,7 +584,7 @@ config I2C_PXA
 	  will be called i2c-pxa.
 
 config I2C_PXA_PCI
-	tristate "Intel CE I2C PCI adapter"
+	bool  "Intel CE I2C PCI adapter"
 	depends on I2C_PXA && X86_32 && PCI
 	depends on ARCH_GEN3
 	help 
