@@ -7419,6 +7419,10 @@ int (*funcSYNODiskRetryReport)(unsigned int, unsigned int) = NULL;
 EXPORT_SYMBOL(funcSYNODiskRetryReport);
 int (*funcSYNOSendEboxRefreshEvent)(int portIndex) = NULL;
 EXPORT_SYMBOL(funcSYNOSendEboxRefreshEvent);
+int SYNO_EVANSPORT_GPIO_PIN(int pin, int *pValue, int isWrite){
+    return 0;
+}
+EXPORT_SYMBOL(SYNO_EVANSPORT_GPIO_PIN);
 #endif
 
 #ifdef MY_ABC_HERE

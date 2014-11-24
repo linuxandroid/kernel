@@ -41,9 +41,9 @@ modules.builtin
 /linux
 /vmlinux
 /vmlinuz
-/System.map
-/Module.markers
-/Module.symvers
+System.map
+Module.markers
+Module.symvers
 
 #
 # Debian directory (make deb-pkg)

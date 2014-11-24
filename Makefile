@@ -194,8 +194,8 @@ SUBARCH := $(shell uname -m | sed -e s/i.86/i386/ -e s/sun4u/sparc64/ \
 export KBUILD_BUILDHOST := $(SUBARCH)
 #ARCH		?= $(SUBARCH)
 #CROSS_COMPILE	?=
-ARCH		?= x86_64
-CROSS_COMPILE	?= ../x86_64-pc-linux-gnu/bin/x86_64-pc-linux-gnu-
+ARCH		?= x86
+CROSS_COMPILE	?= ../i686-pc-linux-gnu/bin/i686-pc-linux-gnu-
 #CROSS_COMPILE	?= /usr/local/arm-none-linux-gnueabi/bin/arm-none-linux-gnueabi-
 
 # Architecture as present in compile.h
