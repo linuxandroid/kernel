@@ -15,7 +15,7 @@ make -j4
 
 # make modules
 mkdir -p .ko
-make -C qcacld-2.0/ -j4
+cd qcacld-2.0/; make  -j4; cd ..
 find drivers/ -name *.ko -exec cp {} .ko \;
 find .ko/*.ko -exec arm-eabi-strip --strip-unneeded {} \;
 
