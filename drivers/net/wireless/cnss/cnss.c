@@ -50,7 +50,30 @@
 #define QCA6174_FW_1_3	(0x13)
 #define QCA6174_FW_2_0	(0x20)
 #define QCA6174_FW_3_0	(0x30)
+#define QCA6174_FW_3_2	(0x32)
+#define AR6320_REV1_VERSION             0x5000000
+#define AR6320_REV1_1_VERSION           0x5000001
+#define AR6320_REV1_3_VERSION           0x5000003
+#define AR6320_REV2_1_VERSION           0x5010000
+#define AR6320_REV3_VERSION             0x5020000
+#define AR6320_REV3_2_VERSION           0x5030000
+#define AR900B_DEV_VERSION              0x1000000
 
+static struct cnss_fw_files FW_FILES_QCA6174_FW_1_1 = {
+"qwlan11.bin", "bdwlan11.bin", "otp11.bin", "utf11.bin",
+"utfbd11.bin", "epping11.bin", "evicted11.bin"};
+static struct cnss_fw_files FW_FILES_QCA6174_FW_2_0 = {
+"qwlan20.bin", "bdwlan20.bin", "otp20.bin", "utf20.bin",
+"utfbd20.bin", "epping20.bin", "evicted20.bin"};
+static struct cnss_fw_files FW_FILES_QCA6174_FW_1_3 = {
+"qwlan13.bin", "bdwlan13.bin", "otp13.bin", "utf13.bin",
+"utfbd13.bin", "epping13.bin", "evicted13.bin"};
+static struct cnss_fw_files FW_FILES_QCA6174_FW_3_0 = {
+"qwlan30.bin", "bdwlan30.bin", "otp30.bin", "utf30.bin",
+"utfbd30.bin", "epping30.bin", "evicted30.bin"};
+static struct cnss_fw_files FW_FILES_DEFAULT = {
+"qwlan.bin", "bdwlan.bin", "otp.bin", "utf.bin",
+"utfbd.bin", "epping.bin", "evicted.bin"};
 #define WLAN_VREG_NAME		"vdd-wlan"
 #define WLAN_SWREG_NAME		"wlan-soc-swreg"
 #define WLAN_EN_GPIO_NAME	"wlan-en-gpio"
@@ -67,6 +90,7 @@
 #define WLAN_ENABLE_DELAY	10000
 #define WLAN_RECOVERY_DELAY	1000
 
+static DEFINE_SPINLOCK(pci_link_down_lock);
 struct cnss_wlan_gpio_info {
 	char *name;
 	u32 num;
@@ -100,6 +124,7 @@ static struct cnss_data {
 	bool pcie_link_down_ind;
 	struct pci_saved_state *saved_state;
 	u16 revision_id;
+	u16 dfs_nol_info_len;
 	struct cnss_fw_files fw_files;
 	struct pm_qos_request qos_request;
 	void *modem_notify_handler;
@@ -116,6 +141,7 @@ static struct cnss_data {
 	struct wakeup_source ws;
 	uint32_t recovery_count;
 	enum cnss_driver_status driver_status;
+	void *dfs_nol_info;
 } *penv;
 
 extern unsigned int system_rev;
@@ -511,6 +537,36 @@ int cnss_get_fw_files(struct cnss_fw_files *pfw_files)
 }
 EXPORT_SYMBOL(cnss_get_fw_files);
 
+int cnss_get_fw_files_for_target(struct cnss_fw_files *pfw_files,
+					u32 target_type, u32 target_version)
+{
+	if (!pfw_files)
+		return -ENODEV;
+
+	switch (target_version) {
+	case AR6320_REV1_VERSION:
+	case AR6320_REV1_1_VERSION:
+		memcpy(pfw_files, &FW_FILES_QCA6174_FW_1_1, sizeof(*pfw_files));
+		break;
+	case AR6320_REV1_3_VERSION:
+		memcpy(pfw_files, &FW_FILES_QCA6174_FW_1_3, sizeof(*pfw_files));
+		break;
+	case AR6320_REV2_1_VERSION:
+		memcpy(pfw_files, &FW_FILES_QCA6174_FW_2_0, sizeof(*pfw_files));
+		break;
+	case AR6320_REV3_VERSION:
+	case AR6320_REV3_2_VERSION:
+		memcpy(pfw_files, &FW_FILES_QCA6174_FW_3_0, sizeof(*pfw_files));
+		break;
+	default:
+		memcpy(pfw_files, &FW_FILES_DEFAULT, sizeof(*pfw_files));
+		pr_err("%s version mismatch 0x%X 0x%X",
+				__func__, target_type, target_version);
+		break;
+	}
+	return 0;
+}
+EXPORT_SYMBOL(cnss_get_fw_files_for_target);
 static int cnss_wlan_pci_probe(struct pci_dev *pdev,
 			       const struct pci_device_id *id)
 {
@@ -590,6 +646,7 @@ out:
 	return ret;
 }
 
+static DECLARE_RWSEM(cnss_pm_sem);
 static DEFINE_PCI_DEVICE_TABLE(cnss_wlan_pci_id_table) = {
 	{ QCA6174_VENDOR_ID, QCA6174_DEVICE_ID, PCI_ANY_ID, PCI_ANY_ID },
 	{ 0 }
@@ -612,12 +669,41 @@ void recovery_work_handler(struct work_struct *recovery)
 
 DECLARE_WORK(recovery_work, recovery_work_handler);
 
+void cnss_schedule_recovery_work(void)
+{
+	schedule_work(&recovery_work);
+}
+EXPORT_SYMBOL(cnss_schedule_recovery_work);
+
 void cnss_pci_link_down_cb(struct msm_pcie_notify *notify)
 {
 	penv->pcie_link_down_ind = true;
 	pr_err("PCI link down, schedule recovery\n");
 	schedule_work(&recovery_work);
 }
+
+void cnss_wlan_pci_link_down(void)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&pci_link_down_lock, flags);
+	if (penv->pcie_link_down_ind) {
+		pr_debug("PCI link down recovery is in progress, ignore!\n");
+		spin_unlock_irqrestore(&pci_link_down_lock, flags);
+		return;
+	}
+	penv->pcie_link_down_ind = true;
+	spin_unlock_irqrestore(&pci_link_down_lock, flags);
+
+	pr_err("PCI link down detected by host driver, schedule recovery!\n");
+	schedule_work(&recovery_work);
+}
+EXPORT_SYMBOL(cnss_wlan_pci_link_down);
+int cnss_pcie_shadow_control(struct pci_dev *dev, bool enable)
+{
+	return msm_pcie_shadow_control(dev, enable);
+}
+EXPORT_SYMBOL(cnss_pcie_shadow_control);
 
 int cnss_wlan_register_driver(struct cnss_wlan_driver *driver)
 {
@@ -871,6 +957,51 @@ int cnss_get_wlan_unsafe_channel(u16 *unsafe_ch_list,
 }
 EXPORT_SYMBOL(cnss_get_wlan_unsafe_channel);
 
+int cnss_wlan_set_dfs_nol(void *info, u16 info_len)
+{
+	void *temp;
+
+	if (!penv)
+		return -ENODEV;
+
+	if (!info || !info_len)
+		return -EINVAL;
+
+	temp = kmalloc(info_len, GFP_KERNEL);
+	if (!temp)
+		return -ENOMEM;
+
+	memcpy(temp, info, info_len);
+
+	kfree(penv->dfs_nol_info);
+
+	penv->dfs_nol_info = temp;
+	penv->dfs_nol_info_len = info_len;
+
+	return 0;
+}
+EXPORT_SYMBOL(cnss_wlan_set_dfs_nol);
+
+int cnss_wlan_get_dfs_nol(void *info, u16 info_len)
+{
+	int len;
+
+	if (!penv)
+		return -ENODEV;
+
+	if (!info || !info_len)
+		return -EINVAL;
+
+	if (penv->dfs_nol_info == NULL || penv->dfs_nol_info_len == 0)
+		return -ENOENT;
+
+	len = min(info_len, penv->dfs_nol_info_len);
+
+	memcpy(info, penv->dfs_nol_info, len);
+
+	return len;
+}
+EXPORT_SYMBOL(cnss_wlan_get_dfs_nol);
 void cnss_pm_wake_lock_init(struct wakeup_source *ws, const char *name)
 {
 	wakeup_source_init(ws, name);
@@ -901,6 +1032,18 @@ void cnss_pm_wake_lock_destroy(struct wakeup_source *ws)
 }
 EXPORT_SYMBOL(cnss_pm_wake_lock_destroy);
 
+void cnss_lock_pm_sem(void)
+{
+	down_read(&cnss_pm_sem);
+}
+EXPORT_SYMBOL(cnss_lock_pm_sem);
+
+void cnss_release_pm_sem(void)
+{
+	up_read(&cnss_pm_sem);
+}
+EXPORT_SYMBOL(cnss_release_pm_sem);
+
 void cnss_flush_work(void *work)
 {
 	struct work_struct *cnss_work = work;
@@ -921,6 +1064,11 @@ void cnss_get_monotonic_boottime(struct timespec *ts)
 }
 EXPORT_SYMBOL(cnss_get_monotonic_boottime);
 
+void cnss_init_work(struct work_struct *work, work_func_t func)
+{
+	INIT_WORK(work, func);
+}
+EXPORT_SYMBOL(cnss_init_work);
 int cnss_get_ramdump_mem(unsigned long *address, unsigned long *size)
 {
 	struct resource *res;
