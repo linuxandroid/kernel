@@ -16,8 +16,9 @@ make -j4
 # make modules
 mkdir -p .ko
 cd qcacld-2.0/; make  -j4; cd ..
-find drivers/ -name *.ko -exec cp {} .ko \;
+find * -name *.ko -exec cp {} .ko \;
 find .ko/*.ko -exec arm-eabi-strip --strip-unneeded {} \;
+cp -r qcacld-2.0/firmware_bin .ko/
 
 
 
@@ -35,11 +36,11 @@ BOARD_RAMDISK_OFFSET=0x02200000
 BOARD_KERNEL_CMDLINE="console=null androidboot.hardware=qcom user_debug=31 msm_rtb.filter=0x37 dwc3_msm.cpu_to_affin=1" 
 tools/mkbootimg --kernel arch/arm/boot/zImage \
 		--ramdisk ramdisk.gz \
-		--output boot.img \
+		--output .ko/boot.img \
 		--cmdline "$BOARD_KERNEL_CMDLINE" \
 		--base $BOARD_KERNEL_BASE \
 		--pagesize $BOARD_KERNEL_PAGESIZE \
 		--ramdisk_offset $BOARD_RAMDISK_OFFSET \
 		--tags_offset $BOARD_KERNEL_TAGS_OFFSET \
 		--dt dt.img
-printf SEANDROIDENFORCE >> boot.img
+printf SEANDROIDENFORCE >> .ko/boot.img
